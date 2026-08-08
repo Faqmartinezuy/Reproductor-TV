@@ -39,11 +39,14 @@ const CONFIG = {
   EXCLUDED_CHANNELS: [
     'Antel TV internacional',
     'Antel TV internacional 2',
+    'Antel TV Internacional 1',
     'Inti',
     'ABC',
     'Mi móvil TV',
     'Siemprecine',
     'Cardinal',
+    'Cardinal TV',
+    'UCL',
   ],
 
   // Orden preferido para la grilla de "Canales": estos van primero, en este
