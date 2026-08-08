@@ -21,7 +21,6 @@ const state = {
   orderMode: false,
   grabbedPublicId: null,
   dragCtx: null,
-  justDragged: false,
 };
 
 const els = {};
@@ -274,7 +273,6 @@ function renderGrid() {
 
     card.addEventListener('click', () => {
       if (state.orderMode) {
-        if (state.justDragged) { state.justDragged = false; return; }
         toggleGrab(card, ch);
         return;
       }
@@ -344,6 +342,23 @@ function moveGrabbedChannel(key) {
 
 /* ================== ARRASTRE CORREGIDO ================== */
 
+// Al soltar el mouse después de arrastrar, el navegador siempre dispara un
+// click "fantasma" — pero ese click puede caer sobre la tarjeta destino en
+// vez de la que arrastraste (la tarjeta original nunca se mueve de verdad,
+// solo su copia visual). Por eso no alcanza con filtrar el click en la
+// tarjeta puntual: anulamos el próximo click venga de donde venga, apenas
+// termina un arrastre real.
+function suppressNextClick() {
+  const handler = (e) => {
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  };
+  document.addEventListener('click', handler, { capture: true, once: true });
+  // Por si ese click nunca llega a dispararse (pasa en algunos navegadores),
+  // no dejamos el listener colgado para siempre.
+  setTimeout(() => document.removeEventListener('click', handler, true), 400);
+}
+
 function enableCardDrag(card) {
   card.addEventListener('dragstart', (e) => e.preventDefault());
 
@@ -408,6 +423,8 @@ function enableCardDrag(card) {
     const ctx = state.dragCtx;
     if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
 
+    try { card.releasePointerCapture(e.pointerId); } catch (err) {}
+
     if (ctx.clone) {
       ctx.clone.remove();
       ctx.clone = null;
@@ -417,6 +434,10 @@ function enableCardDrag(card) {
     els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
 
     if (ctx.moved) {
+      // Hubo un arrastre real: el click fantasma que el navegador va a
+      // disparar ahora (venga de donde venga) no debe hacer nada.
+      suppressNextClick();
+
       card.style.pointerEvents = 'none';
       const under = document.elementFromPoint(e.clientX, e.clientY);
       card.style.pointerEvents = '';
@@ -436,7 +457,6 @@ function enableCardDrag(card) {
           } else {
             els.channelGrid.insertBefore(card, targetCard);
           }
-          state.justDragged = true;
         }
       }
     }
