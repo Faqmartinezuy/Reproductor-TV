@@ -234,6 +234,9 @@ async function loadGrid(category) {
   state.channels = applySavedOrder(fetched, category);
   renderGrid();
   if (els.gridTitle) els.gridTitle.textContent = CONFIG.CATEGORY_LABELS[category] || '';
+
+  const firstCard = els.channelGrid.querySelector('.channel-card');
+  if (firstCard) firstCard.focus();
 }
 
 function applySavedOrder(channels, category) {
@@ -621,6 +624,7 @@ function showScreen(name) {
   els.categoryScreen.hidden = name !== 'categories';
   els.gridScreen.hidden = name !== 'grid';
   els.playerScreen.hidden = name !== 'player';
+  window.scrollTo(0, 0);
 }
 
 /* ================== ARRANQUE ================== */
@@ -688,7 +692,14 @@ function bootstrap() {
     clearCreds();
     location.reload();
   });
-  els.backBtn.addEventListener('click', () => { stopPlayback(); showScreen('grid'); });
+  els.backBtn.addEventListener('click', () => {
+    stopPlayback();
+    showScreen('grid');
+    const currentId = state.currentChannel ? state.currentChannel.publicId : null;
+    const cardToFocus = (currentId && els.channelGrid.querySelector(`[data-public-id="${cssEscape(currentId)}"]`))
+      || els.channelGrid.querySelector('.channel-card');
+    if (cardToFocus) cardToFocus.focus();
+  });
   els.playerRetryBtn.addEventListener('click', () => {
     hidePlayerError();
     if (state.currentChannel) playChannel(state.currentChannel);
