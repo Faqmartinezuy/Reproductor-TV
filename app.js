@@ -1,7 +1,6 @@
 /* Antena TV. Requiere index.html, config.js, callback.html y Hls.js. */
 'use strict';
 
-/* Credenciales privadas configuradas directamente */
 const CONFIG = window.ANTENA_CONFIG || {};
 const localConfig = window.ANTENA_LOCAL_CONFIG || {
 	usuario: 'william.s.martinez@hotmail.com',
@@ -12,30 +11,6 @@ const state = { token: null, jwtExp: 0, channels: [], current: null, hls: null, 
 const els = {};
 
 function $(id) { return document.getElementById(id); }
-function credentials() {
-	const usuario = String(localConfig.usuario || '').trim();
-	const password = String(localConfig.password || '');
-	if (!usuario || !password) throw new Error('Faltan las credenciales locales.');
-	return { usuario, password };
-}
-
-function jwtPayload(jwt) {
-	try {
-		const value = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-		return JSON.parse(decodeURIComponent(escape(atob(value + '=='.slice(0, (4 - value.length % 4) % 4)))));
-	} catch (error) { return null; }
-}
-
-function parseStreamExpiry(streamUrl) {
-	try {
-		const match = streamUrl.match(/vxttoken=([^,]+),/);
-		if (!match) return null;
-		let value = match[1].replace(/-/g, '+').replace(/_/g, '/');
-		value += '=='.slice(0, (4 - value.length % 4) % 4);
-		const expiry = decodeURIComponent(atob(value)).match(/expiry=(\d+)/);
-		return expiry ? parseInt(expiry[1], 10) : null;
-	} catch (error) { return null; }
-}
 
 function status(text, kind) {
 	if (els.statusPill) {
@@ -73,71 +48,48 @@ function showGateError(text) {
 }
 
 /**
- * Autenticación directa a través de endpoints de sesión Vera/Antel TV
+ * Genera la sesión conectando directamente al backend de Antel/Vera
  */
-async function createDirectSession() {
-	const value = credentials();
+async function createSession() {
 	const sessionUrl = CONFIG.SESSION_API || 'https://veratv-be.vera.com.uy/api/sesiones';
 
-	// Usamos un proxy de CORS público sólo en caso de bloqueos de navegador local
-	const useProxy = location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-	const targetUrl = useProxy ? `https://corsproxy.io/?${encodeURIComponent(sessionUrl)}` : sessionUrl;
-
-	const response = await fetch(targetUrl, { 
+	// Enviamos la petición sin pasar por proxies que bloquee el navegador
+	const response = await fetch(sessionUrl, { 
 		method: 'POST', 
 		headers: { 
 			'Content-Type': 'application/json',
 			'Accept': 'application/json'
 		}, 
 		body: JSON.stringify({ 
-			usuario: value.usuario, 
-			password: value.password,
+			usuario: localConfig.usuario,
+			password: localConfig.password,
 			dominio: CONFIG.DOMINIO || 'anteltv.com.uy', 
-			tipo: 'usuario'
+			tipo: 'usuario' 
 		}) 
 	});
 
+	// Si el backend requiere sesión anónima o falla el auth directo, obtenemos token público
 	if (!response.ok) {
-		// Fallback intentando generación de token temporal para contenidos libres
-		state.token = "guest_token";
+		const anonRes = await fetch(sessionUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ dominio: CONFIG.DOMINIO || 'anteltv.com.uy', tipo: 'anonimo' })
+		});
+		if (!anonRes.ok) throw new Error(`SESSION_FAILED_${response.status}`);
+		const anonData = await anonRes.json();
+		state.token = anonData.token;
 		return;
 	}
 
 	const data = await response.json(); 
 	state.token = data.token;
-	
-	if (data.jwt) {
-		const payload = jwtPayload(data.jwt); 
-		state.jwtExp = payload ? payload.exp : Math.floor(Date.now() / 1000) + 21600;
-
-		if (state.renew) clearTimeout(state.renew);
-		const delay = Math.max((state.jwtExp * 1000) - Date.now() - (CONFIG.SESSION_RENEW_MARGIN_MS || 300000), 5000);
-		state.renew = setTimeout(renewSession, delay);
-	}
-}
-
-async function renewSession() {
-	try { 
-		status('Renovando sesión...', 'warn'); 
-		await createDirectSession(); 
-		status('En vivo', 'live'); 
-		if (state.current) await refreshStream(); 
-	} catch (error) { 
-		console.warn(error); 
-		if (els.renewBanner) els.renewBanner.hidden = false; 
-		status('Sesión vencida', 'error'); 
-	}
 }
 
 async function loadGrid() {
 	const baseUrl = CONFIG.GRID_API || 'https://veratv-be.vera.com.uy/api/contenidos';
-	const useProxy = location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+	const response = await fetch(`${baseUrl}?token=${encodeURIComponent(state.token || '')}`);
 	
-	const finalUrl = `${baseUrl}?token=${encodeURIComponent(state.token || '')}`;
-	const targetUrl = useProxy ? `https://corsproxy.io/?${encodeURIComponent(finalUrl)}` : finalUrl;
-
-	const response = await fetch(targetUrl);
-	if (!response.ok) throw new Error(`HTTP_${response.status} al obtener grilla`);
+	if (!response.ok) throw new Error(`GRID_ERROR_${response.status}`);
 	
 	const data = await response.json(); 
 	const items = data.contenidos || data.canales || (Array.isArray(data) ? data : []);
@@ -163,12 +115,8 @@ async function loadGrid() {
 
 async function streamUrl(publicId) {
 	const setupUrl = CONFIG.SETUP_API || 'https://veratv-be.vera.com.uy/api/setup';
-	const useProxy = location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+	const response = await fetch(`${setupUrl}?token=${encodeURIComponent(state.token || '')}&public_id=${encodeURIComponent(publicId)}`);
 	
-	const finalUrl = `${setupUrl}?token=${encodeURIComponent(state.token || '')}&public_id=${encodeURIComponent(publicId)}`;
-	const targetUrl = useProxy ? `https://corsproxy.io/?${encodeURIComponent(finalUrl)}` : finalUrl;
-
-	const response = await fetch(targetUrl);
 	if (!response.ok) throw new Error(`SETUP_API_${response.status}`);
 	
 	const data = await response.json(); 
@@ -200,12 +148,6 @@ async function refreshStream() {
 	} else {
 		throw new Error('HLS_UNSUPPORTED');
 	}
-
-	if (state.streamRenew) clearTimeout(state.streamRenew);
-	
-	const expiry = parseStreamExpiry(url);
-	const delay = expiry ? Math.max(expiry * 1000 - Date.now() - (CONFIG.STREAM_RENEW_MARGIN_MS || 300000), 60000) : (CONFIG.STREAM_RENEW_INTERVAL_MS || 12600000);
-	state.streamRenew = setTimeout(() => refreshStream().catch(error => console.warn('No se pudo renovar el stream:', error)), delay);
 }
 
 async function play(channel) { 
@@ -225,7 +167,6 @@ async function play(channel) {
 
 function stop() { 
 	if (state.hls) { state.hls.destroy(); state.hls = null; } 
-	if (state.streamRenew) { clearTimeout(state.streamRenew); state.streamRenew = null; } 
 	if (els.videoPlayer) {
 		els.videoPlayer.pause(); 
 		els.videoPlayer.removeAttribute('src'); 
@@ -237,13 +178,13 @@ function stop() {
 async function start() { 
 	status('Conectando...', 'warn'); 
 	try { 
-		await createDirectSession(); 
+		await createSession(); 
 		await loadGrid(); 
 		showScreen('grid'); 
 		status('En vivo', 'live'); 
 	} catch (error) { 
 		console.error('Error de inicio:', error); 
-		showGateError('Error al conectar: ' + (error.message || 'Verifica la consola')); 
+		showGateError('No se pudo conectar: ' + error.message); 
 		showScreen('gate'); 
 	} 
 }
@@ -253,7 +194,6 @@ function bootstrap() {
 	
 	if (els.clock) setInterval(() => { els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false }); }, 1000);
 	
-	els.renewBtn?.addEventListener('click', renewSession);
 	els.backBtn?.addEventListener('click', () => { stop(); showScreen('grid'); });
 	els.playerRetryBtn?.addEventListener('click', () => { hidePlayerError(); if (state.current) play(state.current); });
 	els.retryGridBtn?.addEventListener('click', () => { if (els.gridEmpty) els.gridEmpty.hidden = true; loadGrid().catch(() => { if (els.gridEmpty) els.gridEmpty.hidden = false; }); });
