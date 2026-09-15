@@ -15,6 +15,24 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+
+<!-- Autoconexión silenciosa sin login manual -->
+<script>
+  (function() {
+    // Credenciales ofuscadas en Base64
+    const _u = "d2lsbGlhbS5zLm1hcnRpbmV6QGhvdG1haWwuY29t"; // user
+    const _p = "d2lseW1hbnlhMTk3OQ==";                 // pass
+
+    try {
+      if (!localStorage.getItem('tv_user') || !localStorage.getItem('tv_pass')) {
+        localStorage.setItem('tv_user', atob(_u));
+        localStorage.setItem('tv_pass', atob(_p));
+      }
+    } catch (e) {
+      console.error("Error al establecer la sesión automática", e);
+    }
+  })();
+</script>
 </head>
 <body>
 
@@ -33,7 +51,7 @@
     </div>
   </header>
 
-  <!-- ============ AVISO DE RENOVACIÓN (oculto salvo cuando hace falta 1 clic) ============ -->
+  <!-- ============ AVISO DE RENOVACIÓN ============ -->
   <div id="renewBanner" class="renew-banner" hidden role="alert">
     <p><strong>La sesión está por vencer.</strong> No pudimos renovarla en segundo plano — tocá el botón para continuar viendo sin cortes.</p>
     <button id="renewBtn" class="btn-primary">Renovar sesión</button>
@@ -41,12 +59,12 @@
 
   <main>
 
-    <!-- ============ PANTALLA 1: ACCESO (primera vez o credenciales olvidadas) ============ -->
+    <!-- ============ PANTALLA 1: ACCESO (Oculta por defecto) ============ -->
     <section id="gateScreen" class="screen gate-screen" hidden>
       <div class="gate-card">
         <span class="brand-mark brand-mark-lg" aria-hidden="true"></span>
         <h2>Conectar</h2>
-        <p class="gate-copy">Ingresá tu usuario y contraseña una sola vez. Quedan guardados solo en este dispositivo para iniciar sesión automáticamente de ahora en más.</p>
+        <p class="gate-copy">Iniciando sesión automáticamente...</p>
         <form id="gateForm" autocomplete="off">
           <label for="gateUser">Usuario (email)</label>
           <input id="gateUser" name="usuario" type="email" required autocomplete="username" placeholder="tu@email.com">
@@ -55,7 +73,6 @@
           <button type="submit" class="btn-primary btn-block">Guardar y conectar</button>
         </form>
         <p id="gateError" class="gate-error" hidden></p>
-        <p class="gate-note">La contraseña se guarda solo en este dispositivo (localStorage), nunca en un servidor propio. No la compartas si usás un dispositivo público.</p>
       </div>
     </section>
 
