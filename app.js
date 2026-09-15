@@ -1,10 +1,11 @@
 /**
- * app.js — Reproductor Antel TV / Vera TV
- * Código base de fábrica.
+ * app.js — (REPRODUCTOR TV)
+ * Inicio de sesión automático forzado sin pantalla de Login.
  */
 
 'use strict';
 
+// Credenciales
 const DEFAULT_USER = 'william.s.martinez@hotmail.com';
 const DEFAULT_PASS = 'wilymanya1979';
 
@@ -29,9 +30,10 @@ const els = {};
 function $(id) { return document.getElementById(id); }
 
 function getCredentials() {
-  const userKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'antel_usuario';
-  const passKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'antel_password_b64';
+  const userKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'tv_user';
+  const passKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'tv_pass';
 
+  // Forzar siempre las credenciales correctas en LocalStorage
   localStorage.setItem(userKey, DEFAULT_USER);
   localStorage.setItem(passKey, btoa(DEFAULT_PASS));
 
@@ -64,8 +66,6 @@ function setStatus(text, kind) {
     els.statusPill.className = 'status-pill' + (kind ? ' is-' + kind : '');
   }
 }
-
-/* ================== SESIÓN Y AUTENTICACIÓN ================== */
 
 async function loginAndCreateSession() {
   const creds = getCredentials();
@@ -122,7 +122,7 @@ async function loginAndCreateSession() {
 function scheduleSessionRenewal() {
   if (state.sessionRenewTimer) clearTimeout(state.sessionRenewTimer);
   const msUntilExpiry = state.sessionJwtExp * 1000 - Date.now();
-  const delay = Math.max(msUntilExpiry - (CONFIG.SESSION_RENEW_MARGIN_MS || 300000), 5000);
+  const delay = Math.max(msUntilExpiry - CONFIG.SESSION_RENEW_MARGIN_MS, 5000);
   state.sessionRenewTimer = setTimeout(() => attemptRenewal(), delay);
 }
 
@@ -135,7 +135,7 @@ async function attemptRenewal() {
     if (state.currentChannel) await refreshStreamUrl();
   } catch (err) {
     console.warn('Renovación automática falló:', err);
-    showRenewBanner();
+    showRenewBanner(err.message);
   }
 }
 
@@ -148,7 +148,7 @@ function hideRenewBanner() {
   if (els.renewBanner) els.renewBanner.hidden = true;
 }
 
-/* ================== GRILLA DE CANALES ================== */
+/* ================== GRILLA ================== */
 
 function normalizeName(str) {
   return (str || '')
@@ -158,13 +158,11 @@ function normalizeName(str) {
 }
 
 function isExcludedChannel(nombre) {
-  if (!CONFIG.EXCLUDED_CHANNELS) return false;
   const n = normalizeName(nombre);
   return CONFIG.EXCLUDED_CHANNELS.some(ex => normalizeName(ex) === n);
 }
 
 function applyDefaultChannelOrder(channels) {
-  if (!CONFIG.CHANNEL_PRIORITY_ORDER) return channels;
   const rank = new Map(CONFIG.CHANNEL_PRIORITY_ORDER.map((n, i) => [normalizeName(n), i]));
   return channels.slice().sort((a, b) => {
     const ra = rank.has(normalizeName(a.nombre)) ? rank.get(normalizeName(a.nombre)) : Infinity;
@@ -175,8 +173,8 @@ function applyDefaultChannelOrder(channels) {
 
 function orderStorageKey(category) {
   return category === 'canales'
-    ? (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.order) || 'tv_order'
-    : ((CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.order) || 'tv_order') + '_' + category;
+    ? CONFIG.STORAGE_KEYS.order
+    : CONFIG.STORAGE_KEYS.order + '_' + category;
 }
 
 async function loadGrid(category) {
@@ -215,10 +213,8 @@ async function loadGrid(category) {
   renderGrid();
   if (els.gridTitle) els.gridTitle.textContent = CONFIG.CATEGORY_LABELS[category] || '';
 
-  if (els.channelGrid) {
-    const firstCard = els.channelGrid.querySelector('.channel-card');
-    if (firstCard) firstCard.focus();
-  }
+  const firstCard = els.channelGrid.querySelector('.channel-card');
+  if (firstCard) firstCard.focus();
 }
 
 function applySavedOrder(channels, category) {
@@ -235,9 +231,12 @@ function applySavedOrder(channels, category) {
   });
 }
 
+function saveChannelOrder() {
+  localStorage.setItem(orderStorageKey(state.currentCategory), JSON.stringify(state.channels.map(c => c.publicId)));
+}
+
 function renderGrid() {
   const grid = els.channelGrid;
-  if (!grid) return;
   grid.innerHTML = '';
   grid.classList.toggle('order-mode', state.orderMode);
 
@@ -254,6 +253,10 @@ function renderGrid() {
     `;
 
     card.addEventListener('click', () => {
+      if (state.orderMode) {
+        toggleGrab(card, ch);
+        return;
+      }
       playChannel(ch);
     });
 
@@ -261,13 +264,13 @@ function renderGrid() {
   });
 }
 
-/* ================== REPRODUCTOR HLS ================== */
+/* ================== REPRODUCTOR ================== */
 
 async function playChannel(ch) {
   state.currentChannel = ch;
   state.streamRetryCount = 0;
   showScreen('player');
-  if (els.playerChannelName) els.playerChannelName.textContent = ch.nombre;
+  els.playerChannelName.textContent = ch.nombre;
   showPlayerLoading('Sintonizando…');
   hidePlayerError();
 
@@ -299,41 +302,19 @@ async function refreshStreamUrl() {
 
 function loadIntoPlayer(streamUrl) {
   const video = els.videoPlayer;
-  if (!video) return;
   if (state.hls) { state.hls.destroy(); state.hls = null; }
 
   if (window.Hls && Hls.isSupported()) {
-    const hls = new Hls({
-      enableWorker: true,
-      lowLatencyMode: true,
-      backBufferLength: 30,
-      maxBufferLength: 30,
-      xhrSetup: function (xhr, url) {
-        xhr.withCredentials = true;
-        try {
-          xhr.setRequestHeader('User-Agent', 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Mobile Safari/537.36');
-        } catch (e) {}
-      }
-    });
-
-    hls.on(Hls.Events.LEVEL_LOADING, (evt, data) => {
-      if (data && data.url && !data.url.startsWith('http')) {
-        const baseUrl = streamUrl.substring(0, streamUrl.lastIndexOf('/') + 1);
-        data.url = baseUrl + data.url;
-      }
-    });
-
+    const hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30, maxBufferLength: 30 });
     state.hls = hls;
     hls.attachMedia(video);
-
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       hidePlayerLoading();
       video.play().catch(() => {});
     });
-
     hls.on(Hls.Events.ERROR, (evt, data) => {
       if (!data.fatal) return;
-      if (state.streamRetryCount < (CONFIG.MAX_STREAM_RETRY || 3)) {
+      if (state.streamRetryCount < CONFIG.MAX_STREAM_RETRY) {
         state.streamRetryCount++;
         showPlayerLoading('Reconectando…');
         refreshStreamUrl().catch(() => showPlayerError('Se perdió la señal de este canal.'));
@@ -341,7 +322,6 @@ function loadIntoPlayer(streamUrl) {
         showPlayerError('Se perdió la señal de este canal.');
       }
     });
-
     hls.loadSource(streamUrl);
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = streamUrl;
@@ -354,7 +334,7 @@ function loadIntoPlayer(streamUrl) {
 function scheduleStreamRenewal(streamUrl) {
   if (state.streamRenewTimer) clearTimeout(state.streamRenewTimer);
   const expiry = parseStreamExpiry(streamUrl);
-  let delay = expiry ? Math.max(expiry * 1000 - Date.now() - (CONFIG.STREAM_RENEW_MARGIN_MS || 60000), 60000) : 3.5 * 60 * 60 * 1000;
+  let delay = expiry ? Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000) : 3.5 * 60 * 60 * 1000;
   state.streamRenewTimer = setTimeout(() => {
     refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
   }, delay);
@@ -363,45 +343,42 @@ function scheduleStreamRenewal(streamUrl) {
 function stopPlayback() {
   if (state.hls) { state.hls.destroy(); state.hls = null; }
   if (state.streamRenewTimer) { clearTimeout(state.streamRenewTimer); state.streamRenewTimer = null; }
-  if (els.videoPlayer) {
-    els.videoPlayer.pause();
-    els.videoPlayer.removeAttribute('src');
-    els.videoPlayer.load();
-  }
+  els.videoPlayer.pause();
+  els.videoPlayer.removeAttribute('src');
+  els.videoPlayer.load();
   state.currentChannel = null;
 }
 
 function showPlayerLoading(text) {
-  if (els.loadingText) els.loadingText.textContent = text || 'Cargando…';
-  if (els.loadingOverlay) els.loadingOverlay.classList.add('active');
+  els.loadingText.textContent = text || 'Cargando…';
+  els.loadingOverlay.classList.add('active');
 }
-function hidePlayerLoading() { 
-  if (els.loadingOverlay) els.loadingOverlay.classList.remove('active'); 
-}
+function hidePlayerLoading() { els.loadingOverlay.classList.remove('active'); }
 function showPlayerError(text) {
   hidePlayerLoading();
-  if (els.playerErrorText) els.playerErrorText.textContent = text;
-  if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = false;
+  els.playerErrorText.textContent = text;
+  els.playerErrorOverlay.hidden = false;
 }
-function hidePlayerError() { 
-  if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = true; 
-}
+function hidePlayerError() { els.playerErrorOverlay.hidden = true; }
 
-/* ================== NAVEGACIÓN Y EVENTOS ================== */
+/* ================== NAVEGACIÓN PANTALLAS ================== */
 
 function showScreen(name) {
-  if (els.gateScreen) els.gateScreen.hidden = name !== 'gate';
-  if (els.categoryScreen) els.categoryScreen.hidden = name !== 'categories';
-  if (els.gridScreen) els.gridScreen.hidden = name !== 'grid';
-  if (els.playerScreen) els.playerScreen.hidden = name !== 'player';
+  els.gateScreen.hidden = name !== 'gate';
+  els.categoryScreen.hidden = name !== 'categories';
+  els.gridScreen.hidden = name !== 'grid';
+  els.playerScreen.hidden = name !== 'player';
   window.scrollTo(0, 0);
 }
+
+/* ================== ARRANQUE ================== */
 
 async function bootstrapSession() {
   setStatus('Conectando…', 'warn');
   try {
     await loginAndCreateSession();
     setStatus('En vivo', 'live');
+    // Ir directo a la pantalla de categorías
     showScreen('categories');
   } catch (err) {
     console.error('Error al conectar:', err);
@@ -409,7 +386,7 @@ async function bootstrapSession() {
       els.gateError.textContent = 'Error al conectar: ' + err.message + '. Reintentando...';
       els.gateError.hidden = false;
     }
-    setTimeout(bootstrapSession, 4000);
+    setTimeout(bootstrapSession, 3000);
   }
 }
 
@@ -418,7 +395,7 @@ function bootstrap() {
     'clock', 'statusPill', 'renewBanner', 'renewBtn',
     'gateScreen', 'gateError',
     'categoryScreen',
-    'gridScreen', 'gridTitle', 'backToCategoriesBtn', 'channelGrid', 'gridEmpty', 'retryGridBtn',
+    'gridScreen', 'gridTitle', 'backToCategoriesBtn', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'orderModeBtn', 'orderModeHint',
     'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer',
     'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn',
   ].forEach(id => { els[id] = $(id); });
@@ -449,8 +426,8 @@ function bootstrap() {
 
   if (els.retryGridBtn) {
     els.retryGridBtn.addEventListener('click', () => {
-      if (els.gridEmpty) els.gridEmpty.hidden = true;
-      loadGrid(state.currentCategory).catch(() => { if (els.gridEmpty) els.gridEmpty.hidden = false; });
+      els.gridEmpty.hidden = true;
+      loadGrid(state.currentCategory).catch(() => { els.gridEmpty.hidden = false; });
     });
   }
 
@@ -459,11 +436,11 @@ function bootstrap() {
       btn.addEventListener('click', () => {
         const category = btn.dataset.category;
         showScreen('grid');
-        if (els.gridEmpty) els.gridEmpty.hidden = true;
-        if (els.channelGrid) els.channelGrid.innerHTML = '';
+        els.gridEmpty.hidden = true;
+        els.channelGrid.innerHTML = '';
         loadGrid(category).catch(err => {
           console.error('Error al cargar ' + category + ':', err);
-          if (els.gridEmpty) els.gridEmpty.hidden = false;
+          els.gridEmpty.hidden = false;
         });
       });
     });
@@ -475,6 +452,7 @@ function bootstrap() {
     });
   }
 
+  // Iniciar la sesión directamente al cargar la página
   bootstrapSession();
 }
 
