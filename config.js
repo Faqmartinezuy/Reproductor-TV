@@ -1,29 +1,23 @@
 /**
  * config.js — (REPRODUCTOR TV)
- * Configuración de endpoints, listas y credenciales por defecto para auto-login.
  */
 
 const CONFIG = {
-  // Credenciales por defecto para el inicio automático silencioso.
-  // En producción (ej. Vercel), estas variables se leen desde el entorno.
-  // Si no usas bundler, se usarán las cadenas vacías y se le pedirán al usuario en la primera pantalla.
-  DEFAULT_USER: typeof process !== 'undefined' && process.env ? process.env.AUTO_LOGIN_USER : '',
-  DEFAULT_PASS: typeof process !== 'undefined' && process.env ? process.env.AUTO_LOGIN_PASS : '',
+  // Credenciales por defecto para auto-login automático
+  DEFAULT_USER: 'william.s.martinez@hotmail.com',
+  DEFAULT_PASS: 'wilymanya1979',
 
-  LOGIN_API: '/api/login',
+  LOGIN_API: 'https://veratv-be.vera.com.uy/api/usuarios/login',
   SETUP_API: 'https://veratv-be.vera.com.uy/api/setup',
 
-  // Base de la API de grillas de contenido. Cada categoría es una lista
-  // distinta dentro del mismo servicio (ver CONFIG.LISTAS).
   GRID_API_BASE: 'https://cds-frontend.vera.com.uy/api-contenidos/listas',
   GRID_HEADERS: { 'x-service-id': '3', 'x-frontend-id': '1196', 'x-system-id': '1' },
 
-  // IDs de lista confirmados mirando la red del sitio oficial (anteltv.com.uy).
   LISTAS: {
     canales: 68,
     radios: 221,
     camaras: 139,
-    peliculas: 250, // "Cine Uruguayo" en el menú oficial
+    peliculas: 250,
   },
   CATEGORY_LABELS: {
     canales: 'Canales',
@@ -42,11 +36,9 @@ const CONFIG = {
     usuario: 'antel_usuario',
     password: 'antel_password_b64',
     lastChannel: 'antel_ultimo_canal',
-    order: 'antel_orden_canales', // se usa para "canales"; otras categorías agregan un sufijo
+    order: 'antel_orden_canales',
   },
 
-  // Canales sin señal — se sacan de la grilla de "Canales". La comparación
-  // ignora mayúsculas/minúsculas, acentos y espacios/puntuación.
   EXCLUDED_CHANNELS: [
     'Antel TV internacional',
     'Antel TV internacional 2',
@@ -60,9 +52,6 @@ const CONFIG = {
     'UCL',
   ],
 
-  // Orden preferido para la grilla de "Canales": estos van primero, en este
-  // orden. Los canales que no están en esta lista quedan después, en el
-  // mismo orden relativo en que los devuelve la API.
   CHANNEL_PRIORITY_ORDER: [
     'Canal 4',
     'Canal 5',
