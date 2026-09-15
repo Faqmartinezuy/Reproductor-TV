@@ -1,7 +1,5 @@
 /**
  * app.js — (REPRODUCTOR TV)
- * Con inicio de sesión automático y silencioso, arrastre de canales corregido
- * y soporte para combinación Token URL + JWT Authorization Header.
  */
 
 'use strict';
@@ -10,7 +8,7 @@ const state = {
   sessionToken: null,
   jwt: null,
   sessionJwtExp: null,
-  currentCategory: null, // 'canales' | 'radios' | 'camaras' | 'peliculas'
+  currentCategory: null,
   channels: [],
   currentChannel: null,
   hls: null,
@@ -61,12 +59,11 @@ function getStoredCreds() {
   const usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
   const passB64 = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
   
-  // 1. Si el usuario ya guardó credenciales localmente, usar esas.
   if (usuario && passB64) {
     return { usuario, password: b64decode(passB64) };
   }
 
-  // 2. Fallback: usar credenciales por defecto configuradas en CONFIG (variables de entorno)
+  // Toma las credenciales por defecto fijadas en config.js y las guarda en localStorage
   if (CONFIG.DEFAULT_USER && CONFIG.DEFAULT_PASS) {
     saveCreds(CONFIG.DEFAULT_USER, CONFIG.DEFAULT_PASS);
     return { usuario: CONFIG.DEFAULT_USER, password: CONFIG.DEFAULT_PASS };
@@ -94,6 +91,7 @@ async function loginAndCreateSession() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ usuario: creds.usuario, password: creds.password }),
   });
+
   if (!res.ok) {
     let detail = 'HTTP ' + res.status;
     try {
@@ -343,7 +341,7 @@ function moveGrabbedChannel(key) {
   renderGrid();
 }
 
-/* ================== ARRASTRE CORREGIDO ================== */
+/* ================== ARRASTRE DE CANALES ================== */
 
 function suppressNextClick() {
   const handler = (e) => {
@@ -616,7 +614,7 @@ function showScreen(name) {
   window.scrollTo(0, 0);
 }
 
-/* ================== ARRANQUE SILENCIOSO ================== */
+/* ================== ARRANQUE AUTOMÁTICO ================== */
 
 async function bootstrapSession() {
   setStatus('Conectando…', 'warn');
@@ -722,7 +720,7 @@ function bootstrap() {
 
   setupGridKeyboardNav();
 
-  // Inicio automático inmediato con credenciales guardadas o por defecto
+  // Inicio automático al cargar
   const creds = getStoredCreds();
   if (creds) {
     bootstrapSession();
