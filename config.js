@@ -1,8 +1,9 @@
 const CONFIG = {
   LOGIN_API: '/api/login',
-  // Se cambian las URLs remotas por endpoints locales proxy
-  SETUP_API: '/api/setup',
-  GRID_API_BASE: '/api/listas',
+  SETUP_API: 'https://veratv-be.vera.com.uy/api/setup',
+
+  GRID_API_BASE: 'https://cds-frontend.vera.com.uy/api-contenidos/listas',
+  GRID_HEADERS: { 'x-service-id': '3', 'x-frontend-id': '1196', 'x-system-id': '1' },
 
   LISTAS: {
     canales: 68,
@@ -18,7 +19,7 @@ const CONFIG = {
   },
   CATEGORY_ORDER: ['canales', 'radios', 'camaras', 'peliculas'],
 
-  SESSION_API: '/api/sesiones',
+  SESSION_API: 'https://veratv-be.vera.com.uy/api/sesiones',
   DOMINIO: 'lua',
   SESSION_RENEW_MARGIN_MS: 10 * 60 * 1000,
   STREAM_RENEW_MARGIN_MS: 8 * 60 * 1000,
