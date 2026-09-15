@@ -1,11 +1,10 @@
 /**
- * app.js — (REPRODUCTOR TV)
- * Inicio de sesión automático forzado sin pantalla de Login.
+ * app.js — Reproductor Antel TV / Vera TV
+ * Manejo de grilla, inicio de sesión y reproducción HLS con credenciales.
  */
 
 'use strict';
 
-// Credenciales
 const DEFAULT_USER = 'william.s.martinez@hotmail.com';
 const DEFAULT_PASS = 'wilymanya1979';
 
@@ -30,10 +29,9 @@ const els = {};
 function $(id) { return document.getElementById(id); }
 
 function getCredentials() {
-  const userKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'tv_user';
-  const passKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'tv_pass';
+  const userKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'antel_usuario';
+  const passKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'antel_password_b64';
 
-  // Forzar siempre las credenciales correctas en LocalStorage
   localStorage.setItem(userKey, DEFAULT_USER);
   localStorage.setItem(passKey, btoa(DEFAULT_PASS));
 
@@ -66,6 +64,8 @@ function setStatus(text, kind) {
     els.statusPill.className = 'status-pill' + (kind ? ' is-' + kind : '');
   }
 }
+
+/* ================== SESIÓN Y AUTENTICACIÓN ================== */
 
 async function loginAndCreateSession() {
   const creds = getCredentials();
@@ -148,7 +148,7 @@ function hideRenewBanner() {
   if (els.renewBanner) els.renewBanner.hidden = true;
 }
 
-/* ================== GRILLA ================== */
+/* ================== GRILLA DE CANALES ================== */
 
 function normalizeName(str) {
   return (str || '')
@@ -235,10 +235,6 @@ function applySavedOrder(channels, category) {
   });
 }
 
-function saveChannelOrder() {
-  localStorage.setItem(orderStorageKey(state.currentCategory), JSON.stringify(state.channels.map(c => c.publicId)));
-}
-
 function renderGrid() {
   const grid = els.channelGrid;
   if (!grid) return;
@@ -265,7 +261,7 @@ function renderGrid() {
   });
 }
 
-/* ================== REPRODUCTOR ================== */
+/* ================== REPRODUCTOR HLS (HABILITA TODOS LOS CANALES) ================== */
 
 async function playChannel(ch) {
   state.currentChannel = ch;
@@ -313,7 +309,7 @@ function loadIntoPlayer(streamUrl) {
       backBufferLength: 30,
       maxBufferLength: 30,
       xhrSetup: function (xhr, url) {
-        // Enviar cookies entre dominios para incluir 'vxtoken' devuelta por CDN Antel
+        // Habilita el paso de cookies vxtoken para señales con autenticación de CDN
         xhr.withCredentials = true;
         try {
           xhr.setRequestHeader('User-Agent', 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Mobile Safari/537.36');
@@ -321,7 +317,7 @@ function loadIntoPlayer(streamUrl) {
       }
     });
 
-    // Interceptor para reescribir sub-playlists relativas que devuelven canales como VTV Plus
+    // Resuelve sub-playlists con rutas relativas dentro del archivo .m3u8
     hls.on(Hls.Events.LEVEL_LOADING, (evt, data) => {
       if (data && data.url && !data.url.startsWith('http')) {
         const baseUrl = streamUrl.substring(0, streamUrl.lastIndexOf('/') + 1);
@@ -393,7 +389,7 @@ function hidePlayerError() {
   if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = true; 
 }
 
-/* ================== NAVEGACIÓN PANTALLAS ================== */
+/* ================== NAVEGACIÓN Y EVENTOS ================== */
 
 function showScreen(name) {
   if (els.gateScreen) els.gateScreen.hidden = name !== 'gate';
@@ -402,8 +398,6 @@ function showScreen(name) {
   if (els.playerScreen) els.playerScreen.hidden = name !== 'player';
   window.scrollTo(0, 0);
 }
-
-/* ================== ARRANQUE ================== */
 
 async function bootstrapSession() {
   setStatus('Conectando…', 'warn');
@@ -426,7 +420,7 @@ function bootstrap() {
     'clock', 'statusPill', 'renewBanner', 'renewBtn',
     'gateScreen', 'gateError',
     'categoryScreen',
-    'gridScreen', 'gridTitle', 'backToCategoriesBtn', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'orderModeBtn', 'orderModeHint',
+    'gridScreen', 'gridTitle', 'backToCategoriesBtn', 'channelGrid', 'gridEmpty', 'retryGridBtn',
     'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer',
     'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn',
   ].forEach(id => { els[id] = $(id); });
