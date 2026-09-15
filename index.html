@@ -29,20 +29,19 @@
     <div class="header-status">
       <span id="clock" class="clock"></span>
       <span id="statusPill" class="status-pill">Iniciando…</span>
-      <button id="resetBtn" class="btn-ghost" title="Olvidar cuenta guardada en este dispositivo" hidden>Olvidar cuenta</button>
     </div>
   </header>
 
   <!-- ============ AVISO DE RENOVACIÓN ============ -->
   <div id="renewBanner" class="renew-banner" hidden role="alert">
-    <p><strong>La sesión está por vencer.</strong> No pudimos renovarla en segundo plano — tocá el botón para continuar viendo sin cortes.</p>
+    <p><strong>La sesión está por vencer.</strong> Tocá el botón para continuar viendo sin cortes.</p>
     <button id="renewBtn" class="btn-primary">Renovar sesión</button>
   </div>
 
   <main>
 
-    <!-- ============ PANTALLA 1: ACCESO (Oculta) ============ -->
-    <section id="gateScreen" class="screen gate-screen" hidden>
+    <!-- ============ PANTALLA DE CARGA INICIAL ============ -->
+    <section id="gateScreen" class="screen gate-screen">
       <div class="gate-card">
         <span class="brand-mark brand-mark-lg" aria-hidden="true"></span>
         <h2>Conectando...</h2>
@@ -51,7 +50,7 @@
       </div>
     </section>
 
-    <!-- ============ PANTALLA 2: CATEGORÍAS ============ -->
+    <!-- ============ PANTALLA: CATEGORÍAS ============ -->
     <section id="categoryScreen" class="screen category-screen" hidden>
       <div class="category-grid">
         <button class="category-card" type="button" data-category="canales">
@@ -73,19 +72,19 @@
       </div>
     </section>
 
-    <!-- ============ PANTALLA 3: GRILLA ============ -->
+    <!-- ============ PANTALLA: GRILLA ============ -->
     <section id="gridScreen" class="screen grid-screen" hidden>
       <div class="grid-toolbar">
         <button id="backToCategoriesBtn" class="btn-ghost" type="button">← Categorías</button>
         <h2 id="gridTitle" class="grid-title"></h2>
         <button id="orderModeBtn" class="btn-ghost" type="button">Organizar orden</button>
-        <p id="orderModeHint" class="order-hint" hidden>Arrastrá una tarjeta para moverla. Con el control: Enter/OK para tomarla, flechas para moverla, Enter/OK de nuevo para soltarla.</p>
+        <p id="orderModeHint" class="order-hint" hidden>Arrastrá una tarjeta para moverla o usá las flechas del control remoto.</p>
       </div>
       <div id="channelGrid" class="channel-grid" role="list"></div>
       <p id="gridEmpty" class="grid-empty" hidden>No se pudo cargar el contenido. <button id="retryGridBtn" class="btn-link">Reintentar</button></p>
     </section>
 
-    <!-- ============ PANTALLA 4: REPRODUCTOR ============ -->
+    <!-- ============ PANTALLA: REPRODUCTOR ============ -->
     <section id="playerScreen" class="screen player-screen" hidden>
       <div class="player-top">
         <button id="backBtn" class="btn-back">← Volver a la grilla</button>
