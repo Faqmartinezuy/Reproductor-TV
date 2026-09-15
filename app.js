@@ -1,19 +1,21 @@
 /**
  * app.js — (REPRODUCTOR TV)
- * Con arrastre de canales corregido, sesión e inicio automático integrado.
+ * Inicio de sesión automático sin pantalla de login.
  */
 
 'use strict';
 
-// Credenciales por defecto (Base64)
-const DEFAULT_USER_B64 = 'd2lsbGlhbS5zLm1hcnRpbmV6QGhvdG1haWwuY29t';
-const DEFAULT_PASS_B64 = 'd2lseW1hbnlhMTk3OQ==';
+// Credenciales ocultas en Base64
+const AUTH_CREDENTIALS = {
+  u: 'd2lsbGlhbS5zLm1hcnRpbmV6QGhvdG1haWwuY29t', // william.s.martinez@hotmail.com
+  p: 'd2lseW1hbnlhMTk3OQ=='                       // wilymanya1979
+};
 
 const state = {
   sessionToken: null,
   jwt: null,
   sessionJwtExp: null,
-  currentCategory: null, // 'canales' | 'radios' | 'camaras' | 'peliculas'
+  currentCategory: null,
   channels: [],
   currentChannel: null,
   hls: null,
@@ -29,6 +31,25 @@ const els = {};
 
 function $(id) { return document.getElementById(id); }
 
+function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
+function b64decode(str) { return decodeURIComponent(escape(atob(str))); }
+
+function getStoredCreds() {
+  const userKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'tv_user';
+  const passKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'tv_pass';
+
+  let usuario = localStorage.getItem(userKey);
+  let passB64 = localStorage.getItem(passKey);
+
+  if (!usuario || !passB64) {
+    usuario = b64decode(AUTH_CREDENTIALS.u);
+    passB64 = AUTH_CREDENTIALS.p;
+    localStorage.setItem(userKey, usuario);
+    localStorage.setItem(passKey, passB64);
+  }
+  return { usuario, password: b64decode(passB64) };
+}
+
 function parseJwtPayload(jwt) {
   try {
     const b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
@@ -41,8 +62,7 @@ function parseStreamExpiry(streamUrl) {
   try {
     const match = streamUrl.match(/vxttoken=([^,]+),/);
     if (!match) return null;
-    let b64 = match[1];
-    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+    let b64 = match[1].replace(/-/g, '+').replace(/_/g, '/');
     b64 += '=='.slice(0, (4 - (b64.length % 4)) % 4);
     const decoded = decodeURIComponent(atob(b64));
     const expMatch = decoded.match(/expiry=(\d+)/);
@@ -50,34 +70,11 @@ function parseStreamExpiry(streamUrl) {
   } catch (e) { return null; }
 }
 
-function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
-function b64decode(str) { return decodeURIComponent(escape(atob(str))); }
-
 function setStatus(text, kind) {
-  els.statusPill.textContent = text;
-  els.statusPill.className = 'status-pill' + (kind ? ' is-' + kind : '');
-}
-
-function getStoredCreds() {
-  let usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
-  let passB64 = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
-  
-  if (!usuario || !passB64) {
-    usuario = b64decode(DEFAULT_USER_B64);
-    passB64 = DEFAULT_PASS_B64;
-    saveCreds(usuario, b64decode(DEFAULT_PASS_B64));
+  if (els.statusPill) {
+    els.statusPill.textContent = text;
+    els.statusPill.className = 'status-pill' + (kind ? ' is-' + kind : '');
   }
-  return { usuario, password: b64decode(passB64) };
-}
-
-function saveCreds(usuario, password) {
-  localStorage.setItem(CONFIG.STORAGE_KEYS.usuario, usuario);
-  localStorage.setItem(CONFIG.STORAGE_KEYS.password, b64encode(password));
-}
-
-function clearCreds() {
-  localStorage.removeItem(CONFIG.STORAGE_KEYS.usuario);
-  localStorage.removeItem(CONFIG.STORAGE_KEYS.password);
 }
 
 async function loginAndCreateSession() {
@@ -153,15 +150,12 @@ async function attemptRenewal() {
 }
 
 function showRenewBanner(detail) {
-  els.renewBanner.hidden = false;
-  if (detail) {
-    els.renewBanner.querySelector('p').lastChild.textContent =
-      ' No pudimos renovarla en segundo plano — tocá el botón para continuar viendo sin cortes.';
-  }
+  if (els.renewBanner) els.renewBanner.hidden = false;
   setStatus('Sesión vencida', 'error');
 }
+
 function hideRenewBanner() {
-  els.renewBanner.hidden = true;
+  if (els.renewBanner) els.renewBanner.hidden = true;
 }
 
 /* ================== GRILLA ================== */
@@ -337,7 +331,7 @@ function moveGrabbedChannel(key) {
   renderGrid();
 }
 
-/* ================== ARRASTRE DE CANALES ================== */
+/* ================== ARRASTRE CORREGIDO ================== */
 
 function suppressNextClick() {
   const handler = (e) => {
@@ -618,11 +612,10 @@ async function bootstrapSession() {
     await loginAndCreateSession();
     setStatus('En vivo', 'live');
     showScreen('categories');
-    if (els.resetBtn) els.resetBtn.hidden = true;
   } catch (err) {
     console.error('Error al conectar:', err);
-    // En caso de fallo reintenta automáticamente con las credenciales embebidas tras 3 segundos
     setStatus('Reintentando…', 'warn');
+    // Si falla la conexión por red o servidor, reintenta automáticamente en 3s
     setTimeout(bootstrapSession, 3000);
   }
 }
@@ -637,50 +630,67 @@ function bootstrap() {
     'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn',
   ].forEach(id => { els[id] = $(id); });
 
-  setInterval(() => {
-    els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
-  }, 1000);
+  if (els.clock) {
+    setInterval(() => {
+      els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
+    }, 1000);
+  }
 
-  els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(); });
-  els.backBtn.addEventListener('click', () => {
-    stopPlayback();
-    showScreen('grid');
-    const currentId = state.currentChannel ? state.currentChannel.publicId : null;
-    const cardToFocus = (currentId && els.channelGrid.querySelector(`[data-public-id="${cssEscape(currentId)}"]`))
-      || els.channelGrid.querySelector('.channel-card');
-    if (cardToFocus) cardToFocus.focus();
-  });
-  els.playerRetryBtn.addEventListener('click', () => {
-    hidePlayerError();
-    if (state.currentChannel) playChannel(state.currentChannel);
-  });
-  els.retryGridBtn.addEventListener('click', () => {
-    els.gridEmpty.hidden = true;
-    loadGrid(state.currentCategory).catch(() => { els.gridEmpty.hidden = false; });
-  });
+  if (els.renewBtn) {
+    els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(); });
+  }
 
-  els.categoryScreen.querySelectorAll('[data-category]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const category = btn.dataset.category;
-      if (state.orderMode) toggleOrderMode();
+  if (els.backBtn) {
+    els.backBtn.addEventListener('click', () => {
+      stopPlayback();
       showScreen('grid');
+      const currentId = state.currentChannel ? state.currentChannel.publicId : null;
+      const cardToFocus = (currentId && els.channelGrid.querySelector(`[data-public-id="${cssEscape(currentId)}"]`))
+        || els.channelGrid.querySelector('.channel-card');
+      if (cardToFocus) cardToFocus.focus();
+    });
+  }
+
+  if (els.playerRetryBtn) {
+    els.playerRetryBtn.addEventListener('click', () => {
+      hidePlayerError();
+      if (state.currentChannel) playChannel(state.currentChannel);
+    });
+  }
+
+  if (els.retryGridBtn) {
+    els.retryGridBtn.addEventListener('click', () => {
       els.gridEmpty.hidden = true;
-      els.channelGrid.innerHTML = '';
-      loadGrid(category).catch(err => {
-        console.error('Error al cargar ' + category + ':', err);
-        els.gridEmpty.hidden = false;
+      loadGrid(state.currentCategory).catch(() => { els.gridEmpty.hidden = false; });
+    });
+  }
+
+  if (els.categoryScreen) {
+    els.categoryScreen.querySelectorAll('[data-category]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const category = btn.dataset.category;
+        if (state.orderMode) toggleOrderMode();
+        showScreen('grid');
+        els.gridEmpty.hidden = true;
+        els.channelGrid.innerHTML = '';
+        loadGrid(category).catch(err => {
+          console.error('Error al cargar ' + category + ':', err);
+          els.gridEmpty.hidden = false;
+        });
       });
     });
-  });
+  }
 
-  els.backToCategoriesBtn.addEventListener('click', () => {
-    if (state.orderMode) toggleOrderMode();
-    showScreen('categories');
-  });
+  if (els.backToCategoriesBtn) {
+    els.backToCategoriesBtn.addEventListener('click', () => {
+      if (state.orderMode) toggleOrderMode();
+      showScreen('categories');
+    });
+  }
 
   setupGridKeyboardNav();
 
-  // Iniciar directamente la conexión sin pasar por la pantalla de login
+  // Iniciar directamente la sesión
   bootstrapSession();
 }
 
