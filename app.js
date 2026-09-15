@@ -1,11 +1,15 @@
 /**
  * app.js — (REPRODUCTOR TV)
- * Inicio de sesión automático forzado y soporte para suscripción AntelTV Premium.
+ * - Inicio de sesión automático mejorado.
+ * - Soporte Premium y canales de fallback.
+ * - Corrección de reproducción en iOS/Safari.
+ * - Manejo robusto de credenciales y tokens (UTF-8).
+ * - Protección contra DOM incompleto y dependencias faltantes.
  */
 
 'use strict';
 
-// Credenciales
+// Credenciales por defecto
 const DEFAULT_USER = 'william.s.martinez@hotmail.com';
 const DEFAULT_PASS = 'wilymanya1979';
 
@@ -114,35 +118,74 @@ const els = {};
 
 function $(id) { return document.getElementById(id); }
 
-function getCredentials() {
-  const userKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'tv_user';
-  const passKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'tv_pass';
+/* ================== UTILS BASE64 & JWT ================== */
 
-  localStorage.setItem(userKey, DEFAULT_USER);
-  localStorage.setItem(passKey, btoa(DEFAULT_PASS));
-
-  return { usuario: DEFAULT_USER, password: DEFAULT_PASS };
+function decodeBase64Utf8(str) {
+  try {
+    const bin = atob(str);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  } catch (e) {
+    // Fallback por si atob falla en un navegador muy antiguo
+    return decodeURIComponent(escape(atob(str)));
+  }
 }
 
 function parseJwtPayload(jwt) {
   try {
-    const b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padded = b64 + '=='.slice(0, (4 - (b64.length % 4)) % 4);
-    return JSON.parse(decodeURIComponent(escape(atob(padded))));
-  } catch (e) { return null; }
+    const parts = jwt.split('.');
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    b64 += '=='.slice(0, (4 - (b64.length % 4)) % 4);
+    return JSON.parse(decodeBase64Utf8(b64));
+  } catch (e) {
+    return null;
+  }
 }
 
 function parseStreamExpiry(streamUrl) {
   try {
-    const match = streamUrl.match(/vxttoken=([^,]+),/);
+    // Regex flexibilizada para múltiples delimitadores
+    const match = streamUrl.match(/vxttoken=([^&,]+)/);
     if (!match) return null;
     let b64 = match[1].replace(/-/g, '+').replace(/_/g, '/');
     b64 += '=='.slice(0, (4 - (b64.length % 4)) % 4);
-    const decoded = decodeURIComponent(atob(b64));
+    const decoded = decodeBase64Utf8(b64);
     const expMatch = decoded.match(/expiry=(\d+)/);
     return expMatch ? parseInt(expMatch[1], 10) : null;
-  } catch (e) { return null; }
+  } catch (e) {
+    return null;
+  }
 }
+
+/* ================== GESTIÓN DE CREDENCIALES ================== */
+
+function getCredentials() {
+  const userKey = (typeof CONFIG !== 'undefined' && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) ? CONFIG.STORAGE_KEYS.usuario : 'tv_user';
+  const passKey = (typeof CONFIG !== 'undefined' && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) ? CONFIG.STORAGE_KEYS.password : 'tv_pass';
+
+  let usuario = localStorage.getItem(userKey);
+  let passwordB64 = localStorage.getItem(passKey);
+
+  // Solo forzar los credenciales por defecto si no existe una cuenta ya guardada
+  if (!usuario || !passwordB64) {
+    usuario = DEFAULT_USER;
+    localStorage.setItem(userKey, usuario);
+    localStorage.setItem(passKey, btoa(DEFAULT_PASS));
+    return { usuario: DEFAULT_USER, password: DEFAULT_PASS };
+  }
+
+  try {
+    return { usuario, password: decodeBase64Utf8(passwordB64) };
+  } catch (e) {
+    return { usuario, password: atob(passwordB64) }; // Fallback básico
+  }
+}
+
+/* ================== INTERFAZ ================== */
 
 function setStatus(text, kind) {
   if (els.statusPill) {
@@ -152,10 +195,11 @@ function setStatus(text, kind) {
   }
 }
 
+/* ================== SESIÓN Y AUTENTICACIÓN ================== */
+
 async function loginAndCreateSession() {
   const creds = getCredentials();
 
-  // Paso 1: Autenticación
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
     headers: { 
@@ -184,7 +228,6 @@ async function loginAndCreateSession() {
   const loginData = await res.json();
   const { id_token, usuario, dominio } = loginData;
 
-  // Paso 2: Creación de sesión
   const sessionRes = await fetch(CONFIG.SESSION_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -210,7 +253,6 @@ async function loginAndCreateSession() {
   state.sessionToken = sessionData.token;
   state.jwt = sessionData.jwt;
   
-  // Guardar suscripciones y marcar estado Premium
   const subs = sessionData.suscripciones || PREMIUM_SUBSCRIPTION_DATA.suscripciones;
   state.subscriptions = subs;
   state.isPremium = subs.some(s => s.tipo && (s.tipo.sku === 'suscripcion_anteltv_premium' || s.tipo.nombre.includes('Premium')));
@@ -429,7 +471,7 @@ function loadIntoPlayer(streamUrl) {
     });
     hls.on(Hls.Events.ERROR, (evt, data) => {
       if (!data.fatal) return;
-      const maxRetry = CONFIG.MAX_STREAM_RETRY || 3;
+      const maxRetry = (typeof CONFIG !== 'undefined' && CONFIG.MAX_STREAM_RETRY) ? CONFIG.MAX_STREAM_RETRY : 3;
       if (state.streamRetryCount < maxRetry) {
         state.streamRetryCount++;
         showPlayerLoading('Reconectando…');
@@ -441,7 +483,10 @@ function loadIntoPlayer(streamUrl) {
     hls.loadSource(streamUrl);
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = streamUrl;
-    video.addEventListener('loadedmetadata', hidePlayerLoading, { once: true });
+    video.addEventListener('loadedmetadata', () => {
+      hidePlayerLoading();
+      video.play().catch(() => {}); // <- Corrección vital para Safari/iOS
+    }, { once: true });
   } else {
     showPlayerError('Este navegador no soporta reproducción HLS.');
   }
@@ -450,7 +495,7 @@ function loadIntoPlayer(streamUrl) {
 function scheduleStreamRenewal(streamUrl) {
   if (state.streamRenewTimer) clearTimeout(state.streamRenewTimer);
   const expiry = parseStreamExpiry(streamUrl);
-  const margin = CONFIG.STREAM_RENEW_MARGIN_MS || 30000;
+  const margin = (typeof CONFIG !== 'undefined' && CONFIG.STREAM_RENEW_MARGIN_MS) ? CONFIG.STREAM_RENEW_MARGIN_MS : 30000;
   let delay = expiry ? Math.max(expiry * 1000 - Date.now() - margin, 60000) : 3.5 * 60 * 60 * 1000;
   state.streamRenewTimer = setTimeout(() => {
     refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
@@ -490,6 +535,7 @@ function hidePlayerError() {
 /* ================== NAVEGACIÓN PANTALLAS ================== */
 
 function showScreen(name) {
+  // Corrección: Comprobación segura antes de asignar propiedades
   if (els.gateScreen) els.gateScreen.hidden = name !== 'gate';
   if (els.categoryScreen) els.categoryScreen.hidden = name !== 'categories';
   if (els.gridScreen) els.gridScreen.hidden = name !== 'grid';
@@ -515,6 +561,17 @@ async function bootstrapSession() {
 }
 
 function bootstrap() {
+  // Corrección: Evitar bloqueos si el archivo de config no cargó correctamente
+  if (typeof CONFIG === 'undefined') {
+    console.error('El objeto global CONFIG no está definido.');
+    const tempError = document.getElementById('gateError');
+    if (tempError) {
+        tempError.textContent = 'Error: No se pudo cargar el archivo de configuración.';
+        tempError.hidden = false;
+    }
+    return;
+  }
+
   [
     'clock', 'statusPill', 'renewBanner', 'renewBtn',
     'gateScreen', 'gateError',
