@@ -1,5 +1,6 @@
 /**
  * app.js — Reproductor Antel TV / Vera TV
+ * Manejo de grilla, inicio de sesión y reproducción HLS con credenciales.
  */
 
 'use strict';
@@ -157,7 +158,7 @@ function normalizeName(str) {
 }
 
 function isExcludedChannel(nombre) {
-  if (!CONFIG.EXCLUDED_CHANNELS || CONFIG.EXCLUDED_CHANNELS.length === 0) return false;
+  if (!CONFIG.EXCLUDED_CHANNELS) return false;
   const n = normalizeName(nombre);
   return CONFIG.EXCLUDED_CHANNELS.some(ex => normalizeName(ex) === n);
 }
@@ -180,10 +181,9 @@ function orderStorageKey(category) {
 
 async function loadGrid(category) {
   state.currentCategory = category;
+  const listId = CONFIG.LISTAS[category];
 
-  // Consulta la API de contenidos autorizados usando la URL base de CONFIG
-  const url = `${CONFIG.GRID_API_BASE}?order=asc&order_by=vigencia_fin&token=${encodeURIComponent(state.sessionToken)}`;
-  
+  const url = `${CONFIG.GRID_API_BASE}/${listId}?token=${encodeURIComponent(state.sessionToken)}`;
   const res = await fetch(url, {
     headers: {
       ...CONFIG.GRID_HEADERS,
@@ -201,12 +201,10 @@ async function loadGrid(category) {
   }
 
   const data = await res.json();
-  const rawList = Array.isArray(data) ? data : (data.contenidos || []);
-
-  let fetched = rawList.map(c => ({
+  let fetched = (data.contenidos || []).map(c => ({
     publicId: c.public_id,
     nombre: c.nombre_fantasia || c.nombre,
-    logo: c.imagen_horizontal || c.imagen_principal || c.imagen_cuadrada,
+    logo: c.imagen_horizontal || c.imagen_principal,
   }));
 
   if (category === 'canales') {
@@ -251,7 +249,7 @@ function renderGrid() {
     card.dataset.publicId = ch.publicId;
     if (state.grabbedPublicId === ch.publicId) card.classList.add('is-grabbed');
     card.innerHTML = `
-      <img class="channel-card-logo" src="${ch.logo || ''}" alt="" loading="lazy">
+      <img class="channel-card-logo" src="${ch.logo}" alt="" loading="lazy">
       <span class="channel-card-name">${ch.nombre}</span>
     `;
 
@@ -263,7 +261,7 @@ function renderGrid() {
   });
 }
 
-/* ================== REPRODUCTOR HLS ================== */
+/* ================== REPRODUCTOR HLS (HABILITA TODOS LOS CANALES) ================== */
 
 async function playChannel(ch) {
   state.currentChannel = ch;
@@ -310,6 +308,21 @@ function loadIntoPlayer(streamUrl) {
       lowLatencyMode: true,
       backBufferLength: 30,
       maxBufferLength: 30,
+      xhrSetup: function (xhr, url) {
+        // Habilita el paso de cookies vxtoken para señales con autenticación de CDN
+        xhr.withCredentials = true;
+        try {
+          xhr.setRequestHeader('User-Agent', 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Mobile Safari/537.36');
+        } catch (e) {}
+      }
+    });
+
+    // Resuelve sub-playlists con rutas relativas dentro del archivo .m3u8
+    hls.on(Hls.Events.LEVEL_LOADING, (evt, data) => {
+      if (data && data.url && !data.url.startsWith('http')) {
+        const baseUrl = streamUrl.substring(0, streamUrl.lastIndexOf('/') + 1);
+        data.url = baseUrl + data.url;
+      }
     });
 
     state.hls = hls;
@@ -335,7 +348,6 @@ function loadIntoPlayer(streamUrl) {
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = streamUrl;
     video.addEventListener('loadedmetadata', hidePlayerLoading, { once: true });
-    video.play().catch(() => {});
   } else {
     showPlayerError('Este navegador no soporta reproducción HLS.');
   }
