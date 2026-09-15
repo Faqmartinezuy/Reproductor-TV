@@ -1,6 +1,5 @@
 /**
  * app.js — Reproductor Antel TV / Vera TV
- * Manejo de grilla, inicio de sesión y reproducción HLS.
  */
 
 'use strict';
@@ -182,8 +181,8 @@ function orderStorageKey(category) {
 async function loadGrid(category) {
   state.currentCategory = category;
 
-  // Endpoint de contenidos autorizados
-  const url = `https://cds-frontend.vera.com.uy/api-contenidos/contenidos/autorizados?order=asc&order_by=vigencia_fin&token=${encodeURIComponent(state.sessionToken)}`;
+  // Consulta la API de contenidos autorizados usando la URL base de CONFIG
+  const url = `${CONFIG.GRID_API_BASE}?order=asc&order_by=vigencia_fin&token=${encodeURIComponent(state.sessionToken)}`;
   
   const res = await fetch(url, {
     headers: {
