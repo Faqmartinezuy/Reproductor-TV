@@ -3,11 +3,8 @@
  */
 
 const CONFIG = {
-  // Credenciales por defecto para auto-login automático
-  DEFAULT_USER: 'william.s.martinez@hotmail.com',
-  DEFAULT_PASS: 'wilymanya1979',
-
-  LOGIN_API: 'https://veratv-be.vera.com.uy/api/usuarios/login',
+  // Apunta a la Serverless Function local en Vercel
+  LOGIN_API: '/api/login',
   SETUP_API: 'https://veratv-be.vera.com.uy/api/setup',
 
   GRID_API_BASE: 'https://cds-frontend.vera.com.uy/api-contenidos/listas',
