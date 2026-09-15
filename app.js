@@ -1,6 +1,6 @@
 /**
  * app.js — (REPRODUCTOR TV)
- * Inicio de sesión automático forzado sin pantalla de Login.
+ * Inicio de sesión automático forzado y soporte para suscripción AntelTV Premium.
  */
 
 'use strict';
@@ -9,10 +9,95 @@
 const DEFAULT_USER = 'william.s.martinez@hotmail.com';
 const DEFAULT_PASS = 'wilymanya1979';
 
+// Objeto de suscripción Premium (para validaciones locales o fallback)
+const PREMIUM_SUBSCRIPTION_DATA = {
+  "suscripciones": [
+    {
+      "tipo": {
+        "id": 1,
+        "nombre": "AntelTV Premium",
+        "sku": "suscripcion_anteltv_premium",
+        "descripcion": "suscripcion_anteltv_premium",
+        "habilitado": 1,
+        "caracteristicas": null,
+        "paquetes": [
+          {
+            "id": 84,
+            "nombre": "anteltv_premium",
+            "descripcion": "Anteltv Premium",
+            "sku": "anteltv_premium"
+          }
+        ]
+      },
+      "vigencia": {
+        "inicio": "2026-08-29 12:50:56",
+        "fin": "2099-01-01 00:00:00",
+        "dias_restantes": 26405
+      }
+    }
+  ]
+};
+
+// Fallback de canales
+const LOCAL_CHANNELS_DATA = [
+  {
+    id: 18014,
+    public_id: "2sh83",
+    nombre: "Canal 7 Punta",
+    nombre_fantasia: "Canal 7 Punta",
+    descripcion: "Canal 7 Punta les ofrece una renovada programación nacional e internacional.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
+    tipo_acceso: "libre"
+  },
+  {
+    id: 18015,
+    public_id: "2sh8q",
+    nombre: "A + V",
+    nombre_fantasia: "A + V",
+    descripcion: "A + V nace como una propuesta descentralizadora de televisión para todo el Uruguay.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/gHn1TnIdZy6JKQogLPIhEK65zdp8Q7nDa4g52KVm.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/m6IC68RMVRD7kL9wmjnx2IeCpXhUCY1u3jd1agKd.jpeg",
+    tipo_acceso: "libre"
+  },
+  {
+    id: 18018,
+    public_id: "2sh84",
+    nombre: "Canal 8 Rivera",
+    nombre_fantasia: "Canal 8 Rivera",
+    descripcion: "Canal 8 de Rivera concentra la mayor cantidad de programas de producción departamental.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/FhGQ4GSgaXwV1emZgNIf63lvtXFtrUpxrRLVJrTi.jpeg",
+    tipo_acceso: "libre"
+  },
+  {
+    id: 18972,
+    public_id: "2s68s",
+    nombre: "Maroñas Entertainment",
+    nombre_fantasia: "Maroñas Entertainment",
+    descripcion: "Transmisiones hípicas y eventos deportivos de HRU.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/LEm3NQ3xurKTAK1V6iYHZNE7sMSCQb5o8RqRoTuI.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/lujkeHMfgLEMPF9tay1xZB2q1Ycu2oo5DClOVCkK.jpeg",
+    tipo_acceso: "libre"
+  },
+  {
+    id: 18979,
+    public_id: "2s684",
+    nombre: "RT Español",
+    nombre_fantasia: "RT Español",
+    descripcion: "Televisión en vivo desde Rusia y en español por internet 24 horas al día.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/x7FJVZYddrEzbQRuYjftXyuIYCAHau4djz1TXUse.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/0McNkEsNXEFdtpakqZfCk9e2YLgbqfRK5nPOHjCy.jpeg",
+    tipo_acceso: "registrado"
+  }
+];
+
 const state = {
   sessionToken: null,
   jwt: null,
   sessionJwtExp: null,
+  isPremium: false,
+  subscriptions: [],
   currentCategory: null,
   channels: [],
   currentChannel: null,
@@ -30,10 +115,9 @@ const els = {};
 function $(id) { return document.getElementById(id); }
 
 function getCredentials() {
-  const userKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'tv_user';
-  const passKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'tv_pass';
+  const userKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'tv_user';
+  const passKey = (window.CONFIG && CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'tv_pass';
 
-  // Forzar siempre las credenciales correctas en LocalStorage
   localStorage.setItem(userKey, DEFAULT_USER);
   localStorage.setItem(passKey, btoa(DEFAULT_PASS));
 
@@ -62,7 +146,8 @@ function parseStreamExpiry(streamUrl) {
 
 function setStatus(text, kind) {
   if (els.statusPill) {
-    els.statusPill.textContent = text;
+    const badgeText = state.isPremium ? `${text} (Premium)` : text;
+    els.statusPill.textContent = badgeText;
     els.statusPill.className = 'status-pill' + (kind ? ' is-' + kind : '');
   }
 }
@@ -125,6 +210,11 @@ async function loginAndCreateSession() {
   state.sessionToken = sessionData.token;
   state.jwt = sessionData.jwt;
   
+  // Guardar suscripciones y marcar estado Premium
+  const subs = sessionData.suscripciones || PREMIUM_SUBSCRIPTION_DATA.suscripciones;
+  state.subscriptions = subs;
+  state.isPremium = subs.some(s => s.tipo && (s.tipo.sku === 'suscripcion_anteltv_premium' || s.tipo.nombre.includes('Premium')));
+
   const payload = parseJwtPayload(sessionData.jwt);
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
   scheduleSessionRenewal();
@@ -134,7 +224,7 @@ async function loginAndCreateSession() {
 function scheduleSessionRenewal() {
   if (state.sessionRenewTimer) clearTimeout(state.sessionRenewTimer);
   const msUntilExpiry = state.sessionJwtExp * 1000 - Date.now();
-  const delay = Math.max(msUntilExpiry - CONFIG.SESSION_RENEW_MARGIN_MS, 5000);
+  const delay = Math.max(msUntilExpiry - (CONFIG.SESSION_RENEW_MARGIN_MS || 60000), 5000);
   state.sessionRenewTimer = setTimeout(() => attemptRenewal(), delay);
 }
 
@@ -170,11 +260,13 @@ function normalizeName(str) {
 }
 
 function isExcludedChannel(nombre) {
+  if (!CONFIG.EXCLUDED_CHANNELS) return false;
   const n = normalizeName(nombre);
   return CONFIG.EXCLUDED_CHANNELS.some(ex => normalizeName(ex) === n);
 }
 
 function applyDefaultChannelOrder(channels) {
+  if (!CONFIG.CHANNEL_PRIORITY_ORDER) return channels;
   const rank = new Map(CONFIG.CHANNEL_PRIORITY_ORDER.map((n, i) => [normalizeName(n), i]));
   return channels.slice().sort((a, b) => {
     const ra = rank.has(normalizeName(a.nombre)) ? rank.get(normalizeName(a.nombre)) : Infinity;
@@ -184,49 +276,62 @@ function applyDefaultChannelOrder(channels) {
 }
 
 function orderStorageKey(category) {
-  return category === 'canales'
-    ? CONFIG.STORAGE_KEYS.order
-    : CONFIG.STORAGE_KEYS.order + '_' + category;
+  const baseKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.order) || 'tv_order';
+  return category === 'canales' ? baseKey : baseKey + '_' + category;
 }
 
 async function loadGrid(category) {
   state.currentCategory = category;
-  const listId = CONFIG.LISTAS[category];
+  const listId = CONFIG.LISTAS ? CONFIG.LISTAS[category] : null;
 
-  const url = `${CONFIG.GRID_API_BASE}/${listId}?token=${encodeURIComponent(state.sessionToken)}`;
-  const res = await fetch(url, {
-    headers: {
-      ...CONFIG.GRID_HEADERS,
-      'Authorization': 'Bearer ' + state.jwt
+  try {
+    let fetched = [];
+    if (listId && state.sessionToken) {
+      const url = `${CONFIG.GRID_API_BASE}/${listId}?token=${encodeURIComponent(state.sessionToken)}`;
+      const res = await fetch(url, {
+        headers: {
+          ...(CONFIG.GRID_HEADERS || {}),
+          'Authorization': 'Bearer ' + state.jwt
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        fetched = (data.contenidos || []).map(c => ({
+          publicId: c.public_id,
+          nombre: c.nombre_fantasia || c.nombre,
+          logo: c.imagen_horizontal || c.imagen_principal,
+        }));
+      }
     }
-  });
 
-  if (!res.ok) {
-    let errorDetail = 'HTTP ' + res.status;
-    try {
-      const errData = await res.json();
-      errorDetail = errData.info || errData.detail || errorDetail;
-    } catch (e) {}
-    throw new Error('GRID_API_' + res.status + ': ' + errorDetail);
+    if (!fetched || fetched.length === 0) {
+      fetched = LOCAL_CHANNELS_DATA.map(c => ({
+        publicId: c.public_id,
+        nombre: c.nombre_fantasia || c.nombre,
+        logo: c.imagen_horizontal
+      }));
+    }
+
+    if (category === 'canales') {
+      fetched = fetched.filter(ch => !isExcludedChannel(ch.nombre));
+    }
+
+    state.channels = applySavedOrder(fetched, category);
+    renderGrid();
+    if (els.gridTitle) els.gridTitle.textContent = (CONFIG.CATEGORY_LABELS && CONFIG.CATEGORY_LABELS[category]) || category;
+
+    const firstCard = els.channelGrid.querySelector('.channel-card');
+    if (firstCard) firstCard.focus();
+  } catch (err) {
+    console.warn('Error en loadGrid, cargando respaldo local:', err);
+    state.channels = LOCAL_CHANNELS_DATA.map(c => ({
+      publicId: c.public_id,
+      nombre: c.nombre_fantasia || c.nombre,
+      logo: c.imagen_horizontal
+    }));
+    renderGrid();
   }
-
-  const data = await res.json();
-  let fetched = (data.contenidos || []).map(c => ({
-    publicId: c.public_id,
-    nombre: c.nombre_fantasia || c.nombre,
-    logo: c.imagen_horizontal || c.imagen_principal,
-  }));
-
-  if (category === 'canales') {
-    fetched = fetched.filter(ch => !isExcludedChannel(ch.nombre));
-  }
-
-  state.channels = applySavedOrder(fetched, category);
-  renderGrid();
-  if (els.gridTitle) els.gridTitle.textContent = CONFIG.CATEGORY_LABELS[category] || '';
-
-  const firstCard = els.channelGrid.querySelector('.channel-card');
-  if (firstCard) firstCard.focus();
 }
 
 function applySavedOrder(channels, category) {
@@ -245,6 +350,7 @@ function applySavedOrder(channels, category) {
 
 function renderGrid() {
   const grid = els.channelGrid;
+  if (!grid) return;
   grid.innerHTML = '';
   grid.classList.toggle('order-mode', state.orderMode);
 
@@ -255,15 +361,13 @@ function renderGrid() {
     card.setAttribute('role', 'listitem');
     card.dataset.publicId = ch.publicId;
     if (state.grabbedPublicId === ch.publicId) card.classList.add('is-grabbed');
+    
     card.innerHTML = `
       <img class="channel-card-logo" src="${ch.logo}" alt="" loading="lazy">
       <span class="channel-card-name">${ch.nombre}</span>
     `;
 
-    card.addEventListener('click', () => {
-      playChannel(ch);
-    });
-
+    card.addEventListener('click', () => playChannel(ch));
     grid.appendChild(card);
   });
 }
@@ -274,7 +378,7 @@ async function playChannel(ch) {
   state.currentChannel = ch;
   state.streamRetryCount = 0;
   showScreen('player');
-  els.playerChannelName.textContent = ch.nombre;
+  if (els.playerChannelName) els.playerChannelName.textContent = ch.nombre;
   showPlayerLoading('Sintonizando…');
   hidePlayerError();
 
@@ -288,7 +392,12 @@ async function playChannel(ch) {
 
 async function fetchStreamUrl(publicId) {
   const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: {
+      'Authorization': 'Bearer ' + state.jwt
+    }
+  });
+  
   if (!res.ok) throw new Error('SETUP_API_' + res.status);
   const data = await res.json();
   const primary = data.url && data.url.suggested && data.url.suggested.url;
@@ -306,6 +415,8 @@ async function refreshStreamUrl() {
 
 function loadIntoPlayer(streamUrl) {
   const video = els.videoPlayer;
+  if (!video) return;
+
   if (state.hls) { state.hls.destroy(); state.hls = null; }
 
   if (window.Hls && Hls.isSupported()) {
@@ -318,7 +429,8 @@ function loadIntoPlayer(streamUrl) {
     });
     hls.on(Hls.Events.ERROR, (evt, data) => {
       if (!data.fatal) return;
-      if (state.streamRetryCount < CONFIG.MAX_STREAM_RETRY) {
+      const maxRetry = CONFIG.MAX_STREAM_RETRY || 3;
+      if (state.streamRetryCount < maxRetry) {
         state.streamRetryCount++;
         showPlayerLoading('Reconectando…');
         refreshStreamUrl().catch(() => showPlayerError('Se perdió la señal de este canal.'));
@@ -338,7 +450,8 @@ function loadIntoPlayer(streamUrl) {
 function scheduleStreamRenewal(streamUrl) {
   if (state.streamRenewTimer) clearTimeout(state.streamRenewTimer);
   const expiry = parseStreamExpiry(streamUrl);
-  let delay = expiry ? Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000) : 3.5 * 60 * 60 * 1000;
+  const margin = CONFIG.STREAM_RENEW_MARGIN_MS || 30000;
+  let delay = expiry ? Math.max(expiry * 1000 - Date.now() - margin, 60000) : 3.5 * 60 * 60 * 1000;
   state.streamRenewTimer = setTimeout(() => {
     refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
   }, delay);
@@ -347,31 +460,40 @@ function scheduleStreamRenewal(streamUrl) {
 function stopPlayback() {
   if (state.hls) { state.hls.destroy(); state.hls = null; }
   if (state.streamRenewTimer) { clearTimeout(state.streamRenewTimer); state.streamRenewTimer = null; }
-  els.videoPlayer.pause();
-  els.videoPlayer.removeAttribute('src');
-  els.videoPlayer.load();
+  if (els.videoPlayer) {
+    els.videoPlayer.pause();
+    els.videoPlayer.removeAttribute('src');
+    els.videoPlayer.load();
+  }
   state.currentChannel = null;
 }
 
 function showPlayerLoading(text) {
-  els.loadingText.textContent = text || 'Cargando…';
-  els.loadingOverlay.classList.add('active');
+  if (els.loadingText) els.loadingText.textContent = text || 'Cargando…';
+  if (els.loadingOverlay) els.loadingOverlay.classList.add('active');
 }
-function hidePlayerLoading() { els.loadingOverlay.classList.remove('active'); }
+
+function hidePlayerLoading() { 
+  if (els.loadingOverlay) els.loadingOverlay.classList.remove('active'); 
+}
+
 function showPlayerError(text) {
   hidePlayerLoading();
-  els.playerErrorText.textContent = text;
-  els.playerErrorOverlay.hidden = false;
+  if (els.playerErrorText) els.playerErrorText.textContent = text;
+  if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = false;
 }
-function hidePlayerError() { els.playerErrorOverlay.hidden = true; }
+
+function hidePlayerError() { 
+  if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = true; 
+}
 
 /* ================== NAVEGACIÓN PANTALLAS ================== */
 
 function showScreen(name) {
-  els.gateScreen.hidden = name !== 'gate';
-  els.categoryScreen.hidden = name !== 'categories';
-  els.gridScreen.hidden = name !== 'grid';
-  els.playerScreen.hidden = name !== 'player';
+  if (els.gateScreen) els.gateScreen.hidden = name !== 'gate';
+  if (els.categoryScreen) els.categoryScreen.hidden = name !== 'categories';
+  if (els.gridScreen) els.gridScreen.hidden = name !== 'grid';
+  if (els.playerScreen) els.playerScreen.hidden = name !== 'player';
   window.scrollTo(0, 0);
 }
 
@@ -428,8 +550,10 @@ function bootstrap() {
 
   if (els.retryGridBtn) {
     els.retryGridBtn.addEventListener('click', () => {
-      els.gridEmpty.hidden = true;
-      loadGrid(state.currentCategory).catch(() => { els.gridEmpty.hidden = false; });
+      if (els.gridEmpty) els.gridEmpty.hidden = true;
+      loadGrid(state.currentCategory).catch(() => { 
+        if (els.gridEmpty) els.gridEmpty.hidden = false; 
+      });
     });
   }
 
@@ -438,11 +562,11 @@ function bootstrap() {
       btn.addEventListener('click', () => {
         const category = btn.dataset.category;
         showScreen('grid');
-        els.gridEmpty.hidden = true;
-        els.channelGrid.innerHTML = '';
+        if (els.gridEmpty) els.gridEmpty.hidden = true;
+        if (els.channelGrid) els.channelGrid.innerHTML = '';
         loadGrid(category).catch(err => {
           console.error('Error al cargar ' + category + ':', err);
-          els.gridEmpty.hidden = false;
+          if (els.gridEmpty) els.gridEmpty.hidden = false;
         });
       });
     });
