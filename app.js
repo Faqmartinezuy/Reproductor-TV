@@ -36,8 +36,7 @@ function parseStreamExpiry(streamUrl) {
   try {
     const match = streamUrl.match(/vxttoken=([^,]+),/);
     if (!match) return null;
-    let b64 = match[1];
-    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+    let b64 = match[1].replace(/-/g, '+').replace(/_/g, '/');
     b64 += '=='.slice(0, (4 - (b64.length % 4)) % 4);
     const decoded = decodeURIComponent(atob(b64));
     const expMatch = decoded.match(/expiry=(\d+)/);
@@ -53,22 +52,14 @@ function setStatus(text, kind) {
   els.statusPill.className = 'status-pill' + (kind ? ' is-' + kind : '');
 }
 
-/* ================== GESTIÓN DE CREDENCIALES Y AUTO-LOGIN ================== */
+/* ================== AUTENTICACIÓN Y SESIÓN ================== */
 
 function getStoredCreds() {
   const usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
   const passB64 = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
-  
   if (usuario && passB64) {
     return { usuario, password: b64decode(passB64) };
   }
-
-  // Toma las credenciales por defecto fijadas en config.js y las guarda en localStorage
-  if (CONFIG.DEFAULT_USER && CONFIG.DEFAULT_PASS) {
-    saveCreds(CONFIG.DEFAULT_USER, CONFIG.DEFAULT_PASS);
-    return { usuario: CONFIG.DEFAULT_USER, password: CONFIG.DEFAULT_PASS };
-  }
-
   return null;
 }
 
@@ -84,12 +75,12 @@ function clearCreds() {
 
 async function loginAndCreateSession() {
   const creds = getStoredCreds();
-  if (!creds) throw new Error('NO_CREDS');
-
+  
+  // Petición al endpoint backend Serverless (/api/login)
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ usuario: creds.usuario, password: creds.password }),
+    body: JSON.stringify(creds || {}),
   });
 
   if (!res.ok) {
@@ -97,6 +88,7 @@ async function loginAndCreateSession() {
     try {
       const errData = await res.json();
       if (errData.detail) detail = `${errData.step ? '[' + errData.step + '] ' : ''}${errData.detail}`;
+      else if (errData.error) detail = errData.error;
     } catch (e) {}
     throw new Error(detail);
   }
@@ -104,6 +96,7 @@ async function loginAndCreateSession() {
   const loginData = await res.json();
   const { id_token, usuario, dominio } = loginData;
 
+  // Intercambio de token en Antel para crear la sesión de streaming
   const sessionRes = await fetch(CONFIG.SESSION_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -168,7 +161,7 @@ function hideRenewBanner() {
   els.renewBanner.hidden = true;
 }
 
-/* ================== GRILLA ================== */
+/* ================== GRILLA DE CONTENIDOS ================== */
 
 function normalizeName(str) {
   return (str || '')
@@ -459,7 +452,7 @@ function enableCardDrag(card) {
   card.addEventListener('pointercancel', endDrag);
 }
 
-/* ================== NAVEGACIÓN TECLADO ================== */
+/* ================== TECLADO Y NAVEGACIÓN ================== */
 
 function setupGridKeyboardNav() {
   els.orderModeBtn.addEventListener('click', toggleOrderMode);
@@ -501,7 +494,7 @@ function setupGridKeyboardNav() {
   });
 }
 
-/* ================== REPRODUCTOR ================== */
+/* ================== REPRODUCTOR DE VIDEO ================== */
 
 async function playChannel(ch) {
   state.currentChannel = ch;
@@ -604,7 +597,7 @@ function showPlayerError(text) {
 }
 function hidePlayerError() { els.playerErrorOverlay.hidden = true; }
 
-/* ================== NAVEGACIÓN PANTALLAS ================== */
+/* ================== PANTALLAS ================== */
 
 function showScreen(name) {
   els.gateScreen.hidden = name !== 'gate';
@@ -614,7 +607,7 @@ function showScreen(name) {
   window.scrollTo(0, 0);
 }
 
-/* ================== ARRANQUE AUTOMÁTICO ================== */
+/* ================== INICIALIZACIÓN ================== */
 
 async function bootstrapSession() {
   setStatus('Conectando…', 'warn');
@@ -645,7 +638,7 @@ function renderGateForCreds() {
     btn = document.createElement('button');
     btn.id = 'gateConnectBtn';
     btn.className = 'btn-primary btn-block';
-    btn.textContent = 'Conectar con ' + creds.usuario;
+    btn.textContent = 'Reintentar conexión';
     btn.style.marginTop = '18px';
     btn.addEventListener('click', () => { els.gateError.hidden = true; bootstrapSession(); });
     $('gateForm').insertAdjacentElement('afterend', btn);
@@ -720,13 +713,8 @@ function bootstrap() {
 
   setupGridKeyboardNav();
 
-  // Inicio automático al cargar
-  const creds = getStoredCreds();
-  if (creds) {
-    bootstrapSession();
-  } else {
-    showScreen('gate');
-  }
+  // Inicio automático inmediato
+  bootstrapSession();
 }
 
 document.addEventListener('DOMContentLoaded', bootstrap);
