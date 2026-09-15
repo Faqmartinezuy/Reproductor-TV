@@ -129,7 +129,6 @@ function decodeBase64Utf8(str) {
     }
     return new TextDecoder().decode(bytes);
   } catch (e) {
-    // Fallback por si atob falla en un navegador muy antiguo
     return decodeURIComponent(escape(atob(str)));
   }
 }
@@ -148,7 +147,6 @@ function parseJwtPayload(jwt) {
 
 function parseStreamExpiry(streamUrl) {
   try {
-    // Regex flexibilizada para múltiples delimitadores
     const match = streamUrl.match(/vxttoken=([^&,]+)/);
     if (!match) return null;
     let b64 = match[1].replace(/-/g, '+').replace(/_/g, '/');
@@ -170,7 +168,6 @@ function getCredentials() {
   let usuario = localStorage.getItem(userKey);
   let passwordB64 = localStorage.getItem(passKey);
 
-  // Solo forzar los credenciales por defecto si no existe una cuenta ya guardada
   if (!usuario || !passwordB64) {
     usuario = DEFAULT_USER;
     localStorage.setItem(userKey, usuario);
@@ -181,7 +178,7 @@ function getCredentials() {
   try {
     return { usuario, password: decodeBase64Utf8(passwordB64) };
   } catch (e) {
-    return { usuario, password: atob(passwordB64) }; // Fallback básico
+    return { usuario, password: atob(passwordB64) };
   }
 }
 
@@ -485,7 +482,7 @@ function loadIntoPlayer(streamUrl) {
     video.src = streamUrl;
     video.addEventListener('loadedmetadata', () => {
       hidePlayerLoading();
-      video.play().catch(() => {}); // <- Corrección vital para Safari/iOS
+      video.play().catch(() => {});
     }, { once: true });
   } else {
     showPlayerError('Este navegador no soporta reproducción HLS.');
@@ -535,7 +532,6 @@ function hidePlayerError() {
 /* ================== NAVEGACIÓN PANTALLAS ================== */
 
 function showScreen(name) {
-  // Corrección: Comprobación segura antes de asignar propiedades
   if (els.gateScreen) els.gateScreen.hidden = name !== 'gate';
   if (els.categoryScreen) els.categoryScreen.hidden = name !== 'categories';
   if (els.gridScreen) els.gridScreen.hidden = name !== 'grid';
@@ -561,7 +557,6 @@ async function bootstrapSession() {
 }
 
 function bootstrap() {
-  // Corrección: Evitar bloqueos si el archivo de config no cargó correctamente
   if (typeof CONFIG === 'undefined') {
     console.error('El objeto global CONFIG no está definido.');
     const tempError = document.getElementById('gateError');
