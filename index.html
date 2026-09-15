@@ -15,24 +15,6 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-
-<!-- Autoconexión silenciosa sin login manual -->
-<script>
-  (function() {
-    // Credenciales ofuscadas en Base64
-    const _u = "d2lsbGlhbS5zLm1hcnRpbmV6QGhvdG1haWwuY29t"; // user
-    const _p = "d2lseW1hbnlhMTk3OQ==";                 // pass
-
-    try {
-      if (!localStorage.getItem('tv_user') || !localStorage.getItem('tv_pass')) {
-        localStorage.setItem('tv_user', atob(_u));
-        localStorage.setItem('tv_pass', atob(_p));
-      }
-    } catch (e) {
-      console.error("Error al establecer la sesión automática", e);
-    }
-  })();
-</script>
 </head>
 <body>
 
@@ -59,19 +41,12 @@
 
   <main>
 
-    <!-- ============ PANTALLA 1: ACCESO (Oculta por defecto) ============ -->
+    <!-- ============ PANTALLA 1: ACCESO (Oculta) ============ -->
     <section id="gateScreen" class="screen gate-screen" hidden>
       <div class="gate-card">
         <span class="brand-mark brand-mark-lg" aria-hidden="true"></span>
-        <h2>Conectar</h2>
+        <h2>Conectando...</h2>
         <p class="gate-copy">Iniciando sesión automáticamente...</p>
-        <form id="gateForm" autocomplete="off">
-          <label for="gateUser">Usuario (email)</label>
-          <input id="gateUser" name="usuario" type="email" required autocomplete="username" placeholder="tu@email.com">
-          <label for="gatePass">Contraseña</label>
-          <input id="gatePass" name="password" type="password" required autocomplete="current-password">
-          <button type="submit" class="btn-primary btn-block">Guardar y conectar</button>
-        </form>
         <p id="gateError" class="gate-error" hidden></p>
       </div>
     </section>
