@@ -1,6 +1,6 @@
 /**
  * app.js — Reproductor Antel TV / Vera TV
- * Manejo de grilla, inicio de sesión y reproducción HLS mediante Proxy local.
+ * Código base de fábrica.
  */
 
 'use strict';
@@ -183,9 +183,13 @@ async function loadGrid(category) {
   state.currentCategory = category;
   const listId = CONFIG.LISTAS[category];
 
-  // Llamada al proxy local
   const url = `${CONFIG.GRID_API_BASE}/${listId}?token=${encodeURIComponent(state.sessionToken)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: {
+      ...CONFIG.GRID_HEADERS,
+      'Authorization': 'Bearer ' + state.jwt
+    }
+  });
 
   if (!res.ok) {
     let errorDetail = 'HTTP ' + res.status;
@@ -276,7 +280,6 @@ async function playChannel(ch) {
 }
 
 async function fetchStreamUrl(publicId) {
-  // Petición de stream apuntando al proxy local
   const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('SETUP_API_' + res.status);
@@ -305,6 +308,19 @@ function loadIntoPlayer(streamUrl) {
       lowLatencyMode: true,
       backBufferLength: 30,
       maxBufferLength: 30,
+      xhrSetup: function (xhr, url) {
+        xhr.withCredentials = true;
+        try {
+          xhr.setRequestHeader('User-Agent', 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Mobile Safari/537.36');
+        } catch (e) {}
+      }
+    });
+
+    hls.on(Hls.Events.LEVEL_LOADING, (evt, data) => {
+      if (data && data.url && !data.url.startsWith('http')) {
+        const baseUrl = streamUrl.substring(0, streamUrl.lastIndexOf('/') + 1);
+        data.url = baseUrl + data.url;
+      }
     });
 
     state.hls = hls;
@@ -330,7 +346,6 @@ function loadIntoPlayer(streamUrl) {
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = streamUrl;
     video.addEventListener('loadedmetadata', hidePlayerLoading, { once: true });
-    video.play().catch(() => {});
   } else {
     showPlayerError('Este navegador no soporta reproducción HLS.');
   }
