@@ -1,5 +1,5 @@
 /**
- * app.js — REPRODUCTOR TV ANTEL
+ * app.js — REPRODUCTOR TV ANTEL (Con Login Real)
  */
 
 'use strict';
@@ -23,7 +23,7 @@ const PREMIUM_SUBSCRIPTION_DATA = {
   ]
 };
 
-// Respaldo local con los public_id configurados
+// Respaldo local con los public_id configurados (VTV Fútbol 1, Canal 4, etc.)
 const LOCAL_CHANNELS_DATA = [
   {
     id: 19001,
@@ -107,9 +107,6 @@ const state = {
   channels: [],
   currentChannel: null,
   hls: null,
-  streamRetryCount: 0,
-  sessionRenewTimer: null,
-  streamRenewTimer: null,
 };
 
 const els = {};
@@ -137,19 +134,7 @@ function parseJwtPayload(jwt) {
 }
 
 function getCredentials() {
-  let usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
-  let passwordB64 = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
-  if (!usuario || !passwordB64) {
-    usuario = DEFAULT_USER;
-    localStorage.setItem(CONFIG.STORAGE_KEYS.usuario, usuario);
-    localStorage.setItem(CONFIG.STORAGE_KEYS.password, btoa(DEFAULT_PASS));
-    return { usuario: DEFAULT_USER, password: DEFAULT_PASS };
-  }
-  try {
-    return { usuario, password: decodeBase64Utf8(passwordB64) };
-  } catch (e) {
-    return { usuario, password: atob(passwordB64) };
-  }
+  return { usuario: DEFAULT_USER, password: DEFAULT_PASS };
 }
 
 function setStatus(text, kind) {
@@ -161,25 +146,29 @@ function setStatus(text, kind) {
 
 async function loginAndCreateSession() {
   const creds = getCredentials();
+  
+  // 1. Petición de Login a Antel
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({ usuario: creds.usuario.trim(), password: creds.password }),
   });
-  if (!res.ok) throw new Error('Error al iniciar sesión (HTTP ' + res.status + ')');
+  if (!res.ok) throw new Error('Error al iniciar sesión en Antel (HTTP ' + res.status + ')');
   
   const loginData = await res.json();
+  
+  // 2. Creación de Sesión con el token obtenido
   const sessionRes = await fetch(CONFIG.SESSION_API, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({
-      usuario: loginData.usuario,
+      usuario: loginData.usuario || creds.usuario.trim(),
       dominio: loginData.dominio || CONFIG.DOMINIO,
       tipo: 'usuario',
       autenticacion_jwt: loginData.id_token,
     }),
   });
-  if (!sessionRes.ok) throw new Error('Error al crear sesión en Antel');
+  if (!sessionRes.ok) throw new Error('Error al crear la sesión en el servidor');
   
   const sessionData = await sessionRes.json();
   state.sessionToken = sessionData.token;
@@ -192,17 +181,13 @@ async function loginAndCreateSession() {
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
 }
 
-async function loadGrid(category) {
-  try {
-    state.channels = LOCAL_CHANNELS_DATA.map(c => ({
-      publicId: c.public_id,
-      nombre: c.nombre_fantasia || c.nombre,
-      logo: c.imagen_horizontal
-    }));
-    renderGrid();
-  } catch (err) {
-    console.warn('Usando canales locales por error de red');
-  }
+function loadGrid(category) {
+  state.channels = LOCAL_CHANNELS_DATA.map(c => ({
+    publicId: c.public_id,
+    nombre: c.nombre_fantasia || c.nombre,
+    logo: c.imagen_horizontal
+  }));
+  renderGrid();
 }
 
 function renderGrid() {
@@ -295,12 +280,18 @@ async function bootstrap() {
   });
 
   setStatus('Conectando…', 'warn');
+  showScreen('gate');
+
   try {
     await loginAndCreateSession();
     setStatus('En vivo', 'live');
     showScreen('categories');
   } catch (err) {
-    if (els.gateError) { els.gateError.textContent = err.message; els.gateError.hidden = false; }
+    if (els.gateError) { 
+      els.gateError.textContent = err.message; 
+      els.gateError.hidden = false; 
+    }
+    setStatus('Error de conexión', 'error');
   }
 }
 
