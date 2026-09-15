@@ -24,8 +24,8 @@ const CONFIG = {
 
   SESSION_API: 'https://veratv-be.vera.com.uy/api/sesiones',
   DOMINIO: 'lua',
-  SESSION_RENEW_MARGIN_MS: 10 * 60 * 1000,
-  STREAM_RENEW_MARGIN_MS: 8 * 60 * 1000,
+  SESSION_RENEW_MARGIN_MS: 5 * 60 * 1000,
+  STREAM_RENEW_MARGIN_MS: 2 * 60 * 1000,
   MAX_STREAM_RETRY: 3,
   STORAGE_KEYS: {
     usuario: 'antel_usuario',
@@ -34,9 +34,12 @@ const CONFIG = {
     order: 'antel_orden_canales', // se usa para "canales"; otras categorías agregan un sufijo
   },
 
-  // Canales sin señal — se sacan de la grilla de "Canales". La comparación
-  // ignora mayúsculas/minúsculas, acentos y espacios/puntuación.
-  EXCLUDED_CHANNELS: [
+  // Sin exclusiones: se deja el arreglo vacío para que NO se oculte ningún canal.
+  EXCLUDED_CHANNELS: [],
+
+  // Orden preferido para la grilla de "Canales": se incluyen al inicio los que antes estaban
+  // excluidos junto con variantes de nombre para asegurar su posicionamiento.
+  CHANNEL_PRIORITY_ORDER: [
     'Antel TV internacional',
     'Antel TV internacional 2',
     'Antel TV Internacional 1',
@@ -47,18 +50,14 @@ const CONFIG = {
     'Cardinal',
     'Cardinal TV',
     'UCL',
-  ],
-
-  // Orden preferido para la grilla de "Canales": estos van primero, en este
-  // orden. Los canales que no están en esta lista quedan después, en el
-  // mismo orden relativo en que los devuelve la API.
-  CHANNEL_PRIORITY_ORDER: [
     'Canal 4',
     'Canal 5',
     'VTV',
     'VTV Plus',
+    'VTV Plus 2',
     'VTV Futbol',
     'VTV Futbol 2',
+    'VTV Futbol 3',
     'TV Ciudad',
     'A+V',
     'Canal 7 Punta',
