@@ -1,28 +1,64 @@
-/**
- * config.js — Configuración general de la aplicación
- */
 const CONFIG = {
-  LOGIN_API: 'https://catalog.anteltv.com.uy/api/v1/auth/login',
-  SESSION_API: 'https://catalog.anteltv.com.uy/api/v1/sesiones',
-  SETUP_API: 'https://catalog.anteltv.com.uy/api/v1/contenido/setup',
-  GRID_API_BASE: 'https://catalog.anteltv.com.uy/api/v1/listas',
-  DOMINIO: 'anteltv',
-  MAX_STREAM_RETRY: 3,
-  STREAM_RENEW_MARGIN_MS: 30000,
-  SESSION_RENEW_MARGIN_MS: 60000,
-  STORAGE_KEYS: {
-    usuario: 'tv_user',
-    password: 'tv_pass',
-    order: 'tv_order'
-  },
+  LOGIN_API: '/api/login',
+  SETUP_API: 'https://veratv-be.vera.com.uy/api/setup',
+
+  GRID_API_BASE: 'https://cds-frontend.vera.com.uy/api-contenidos/listas',
+  GRID_HEADERS: { 'x-service-id': '3', 'x-frontend-id': '1196', 'x-system-id': '1' },
+
   LISTAS: {
-    canales: 'canales_principales'
+    canales: 68,
+    radios: 221,
+    camaras: 139,
+    peliculas: 250,
   },
   CATEGORY_LABELS: {
-    canales: 'Canales de TV',
+    canales: 'Canales',
     radios: 'Radios',
     camaras: 'Cámaras',
-    peliculas: 'Películas'
+    peliculas: 'Películas',
   },
-  EXCLUDED_CHANNELS: []
+  CATEGORY_ORDER: ['canales', 'radios', 'camaras', 'peliculas'],
+
+  SESSION_API: 'https://veratv-be.vera.com.uy/api/sesiones',
+  DOMINIO: 'lua',
+  SESSION_RENEW_MARGIN_MS: 10 * 60 * 1000,
+  STREAM_RENEW_MARGIN_MS: 8 * 60 * 1000,
+  MAX_STREAM_RETRY: 3,
+  STORAGE_KEYS: {
+    usuario: 'antel_usuario',
+    password: 'antel_password_b64',
+    lastChannel: 'antel_ultimo_canal',
+    order: 'antel_orden_canales',
+  },
+
+  EXCLUDED_CHANNELS: [],
+
+  CHANNEL_PRIORITY_ORDER: [
+    'Antel TV internacional',
+    'Antel TV internacional 2',
+    'Antel TV Internacional 1',
+    'Inti',
+    'ABC',
+    'Mi móvil TV',
+    'Siemprecine',
+    'Cardinal',
+    'Cardinal TV',
+    'UCL',
+    'Canal 4',
+    'Canal 5',
+    'VTV',
+    'VTV Plus',
+    'VTV Futbol',
+    'VTV Futbol 2',
+    'TV Ciudad',
+    'A+V',
+    'Canal 7 Punta',
+    'Canal 2 Lascano',
+    '9 de Rocha',
+    'DW',
+    'France 24',
+    'CGTN',
+    'RT',
+    'Telesur',
+  ],
 };
