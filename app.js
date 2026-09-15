@@ -21,11 +21,6 @@ function credentials() {
 function hasLocalCredentials() {
 	return Boolean(String(localConfig.usuario || '').trim() && String(localConfig.password || ''));
 }
-function hex(size) {
-	const bytes = new Uint8Array(size);
-	crypto.getRandomValues(bytes);
-	return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-}
 function jwtPayload(jwt) {
 	try {
 		const value = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
@@ -45,11 +40,12 @@ function parseStreamExpiry(streamUrl) {
 function encode(value) { return btoa(unescape(encodeURIComponent(value))); }
 function decode(value) { return decodeURIComponent(escape(atob(value))); }
 function storedCredentials() {
-	const usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
-	const password = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
+	const usuario = localStorage.getItem(CONFIG.STORAGE_KEYS?.usuario || 'tv_user');
+	const password = localStorage.getItem(CONFIG.STORAGE_KEYS?.password || 'tv_pass');
 	return usuario && password ? { usuario, password: decode(password) } : null;
 }
 function saveCredentials(value) {
+	if (!CONFIG.STORAGE_KEYS) return;
 	localStorage.setItem(CONFIG.STORAGE_KEYS.usuario, value.usuario);
 	localStorage.setItem(CONFIG.STORAGE_KEYS.password, encode(value.password));
 }
@@ -59,30 +55,35 @@ function clearStoredCredentials() {
 	localStorage.removeItem(CONFIG.STORAGE_KEYS.password);
 }
 function status(text, kind) {
-	els.statusPill.textContent = text;
-	els.statusPill.className = 'status-pill' + (kind ? ` is-${kind}` : '');
+	if (els.statusPill) {
+		els.statusPill.textContent = text;
+		els.statusPill.className = 'status-pill' + (kind ? ` is-${kind}` : '');
+	}
 }
 function showScreen(name) {
-	els.gateScreen.hidden = name !== 'gate';
-	els.gridScreen.hidden = name !== 'grid';
-	els.playerScreen.hidden = name !== 'player';
+	if (els.gateScreen) els.gateScreen.hidden = name !== 'gate';
+	if (els.gridScreen) els.gridScreen.hidden = name !== 'grid';
+	if (els.playerScreen) els.playerScreen.hidden = name !== 'player';
 }
 function showLoading(text) {
 	if (els.loadingText) els.loadingText.textContent = text || 'Cargando...';
-	els.loadingOverlay.classList.add('active');
+	if (els.loadingOverlay) els.loadingOverlay.classList.add('active');
 }
-function hideLoading() { els.loadingOverlay.classList.remove('active'); }
+function hideLoading() { if (els.loadingOverlay) els.loadingOverlay.classList.remove('active'); }
 function showPlayerError(text) {
 	hideLoading();
-	els.playerErrorText.textContent = text;
-	els.playerErrorOverlay.hidden = false;
+	if (els.playerErrorText) els.playerErrorText.textContent = text;
+	if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = false;
 }
-function hidePlayerError() { els.playerErrorOverlay.hidden = true; }
+function hidePlayerError() { if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = true; }
 function showGateError(text) {
-	els.gateError.textContent = text;
-	els.gateError.hidden = false;
+	if (els.gateError) {
+		els.gateError.textContent = text;
+		els.gateError.hidden = false;
+	}
 }
 function setupGridKeyboardNav() {
+	if (!els.channelGrid) return;
 	els.channelGrid.addEventListener('keydown', event => {
 		if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
 		const cards = [...els.channelGrid.querySelectorAll('.channel-card')];
@@ -106,102 +107,203 @@ function setupGridKeyboardNav() {
 	});
 }
 
-async function authorize(redirectUri) {
-	const params = new URLSearchParams({
-		client_id: CONFIG.CLIENT_ID, redirect_uri: redirectUri,
-		response_type: 'id_token token', scope: 'openid', state: hex(16), nonce: hex(16), service: redirectUri,
-	});
-	const response = await fetch(`${CONFIG.OIDC_AUTHORIZE_URL}?${params}`);
-	if (response.url.startsWith(redirectUri)) return { hash: new URL(response.url).hash };
-	const html = await response.text();
-	const match = html.match(/name="execution"\s+value="([^"]+)"/);
-	if (!match) throw new Error('LOGIN_FORM_CHANGED');
-	return { action: response.url, execution: match[1] };
-}
-function idToken(hash) {
-	const token = new URLSearchParams(hash.replace(/^#/, '')).get('id_token');
-	if (!token) throw new Error('NO_ID_TOKEN');
-	return token;
-}
-async function login() {
+/**
+ * Autenticación directa por POST a la API de Antel
+ */
+async function loginDirect() {
 	const value = credentials();
-	const redirectUri = new URL('callback.html', document.baseURI).toString();
-	const first = await authorize(redirectUri);
-	if (first.hash) return idToken(first.hash);
-	const popup = window.open('', 'antelAuthPopup', 'width=480,height=640');
-	if (!popup) throw new Error('POPUP_BLOCKED');
-	state.popup = popup;
-	const result = new Promise((resolve, reject) => {
-		const timeout = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('LOGIN_TIMEOUT')); }, CONFIG.LOGIN_POPUP_TIMEOUT_MS);
-		function receive(event) {
-			if (!event.data || event.data.source !== 'antel-callback') return;
-			clearTimeout(timeout); window.removeEventListener('message', receive); resolve(event.data.hash);
-		}
-		window.addEventListener('message', receive);
+	const loginUrl = CONFIG.LOGIN_API || 'https://veratv-be.vera.com.uy/api/login';
+	
+	const res = await fetch(loginUrl, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+		body: JSON.stringify({ usuario: value.usuario.trim(), password: value.password })
 	});
-	const form = document.createElement('form');
-	form.method = 'POST'; form.action = first.action; form.target = 'antelAuthPopup';
-	Object.entries({ username: value.usuario, password: value.password, execution: first.execution, _eventId: 'submit', geolocation: '' }).forEach(([name, fieldValue]) => {
-		const input = document.createElement('input'); input.type = 'hidden'; input.name = name; input.value = fieldValue; form.appendChild(input);
-	});
-	const host = $('authFormHost'); host.replaceChildren(form); form.submit();
-	const hash = await result;
-	try { popup.close(); } catch (error) {}
-	return idToken(hash);
+
+	if (!res.ok) {
+		throw new Error(`LOGIN_API_${res.status}`);
+	}
+
+	const data = await res.json();
+	return data.id_token || data.token || data.jwt;
 }
-async function createSession(token) {
+
+async function createSession(jwtToken) {
 	const value = credentials();
-	const response = await fetch(CONFIG.SESSION_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usuario: value.usuario, dominio: CONFIG.DOMINIO, tipo: 'usuario', autenticacion_jwt: token }) });
+	const sessionUrl = CONFIG.SESSION_API || 'https://veratv-be.vera.com.uy/api/sesiones';
+
+	const response = await fetch(sessionUrl, { 
+		method: 'POST', 
+		headers: { 'Content-Type': 'application/json' }, 
+		body: JSON.stringify({ 
+			usuario: value.usuario, 
+			dominio: CONFIG.DOMINIO || 'anteltv.com.uy', 
+			tipo: 'usuario', 
+			autenticacion_jwt: jwtToken 
+		}) 
+	});
+
 	if (!response.ok) throw new Error(`SESSION_API_${response.status}`);
-	const data = await response.json(); state.token = data.token;
-	const payload = jwtPayload(data.jwt); state.jwtExp = payload ? payload.exp : Math.floor(Date.now() / 1000) + 21600;
+	const data = await response.json(); 
+	state.token = data.token;
+	
+	const payload = jwtPayload(data.jwt); 
+	state.jwtExp = payload ? payload.exp : Math.floor(Date.now() / 1000) + 21600;
+
 	if (state.renew) clearTimeout(state.renew);
-	state.renew = setTimeout(renewSession, Math.max(state.jwtExp * 1000 - Date.now() - CONFIG.SESSION_RENEW_MARGIN_MS, 5000));
+	
+	// Recarga programada 5 minutos (300.000 ms) antes del vencimiento
+	const delay = Math.max((state.jwtExp * 1000) - Date.now() - (CONFIG.SESSION_RENEW_MARGIN_MS || 300000), 5000);
+	state.renew = setTimeout(renewSession, delay);
 }
+
 async function renewSession() {
-	try { status('Renovando sesión...', 'warn'); await createSession(await login()); status('En vivo', 'live'); if (state.current) await refreshStream(); }
-	catch (error) { console.warn(error); els.renewBanner.hidden = false; status('Sesión vencida', 'error'); }
+	try { 
+		status('Renovando sesión...', 'warn'); 
+		const idToken = await loginDirect();
+		await createSession(idToken); 
+		status('En vivo', 'live'); 
+		if (state.current) await refreshStream(); 
+	} catch (error) { 
+		console.warn(error); 
+		if (els.renewBanner) els.renewBanner.hidden = false; 
+		status('Sesión vencida', 'error'); 
+	}
 }
 
 async function loadGrid() {
-	const response = await fetch(`${CONFIG.GRID_API}?token=${encodeURIComponent(state.token)}`);
+	const gridUrl = CONFIG.GRID_API || 'https://veratv-be.vera.com.uy/api/contenidos';
+	const response = await fetch(`${gridUrl}?token=${encodeURIComponent(state.token)}`);
 	if (!response.ok) throw new Error(`GRID_API_${response.status}`);
-	const data = await response.json(); state.channels = (data.contenidos || []).map(channel => ({ publicId: channel.public_id, nombre: channel.nombre_fantasia || channel.nombre, logo: channel.imagen_horizontal || channel.imagen_principal }));
-	els.channelGrid.replaceChildren(...state.channels.map(channel => {
-		const button = document.createElement('button'); button.type = 'button'; button.className = 'channel-card'; button.innerHTML = `<img class="channel-card-logo" src="${channel.logo}" alt="" loading="lazy"><span class="channel-card-name"></span>`; button.querySelector('span').textContent = channel.nombre; button.addEventListener('click', () => play(channel)); return button;
-	}));
+	
+	const data = await response.json(); 
+	const items = data.contenidos || data.canales || (Array.isArray(data) ? data : []);
+	
+	state.channels = items.map(channel => ({ 
+		publicId: channel.public_id || channel.id, 
+		nombre: channel.nombre_fantasia || channel.nombre, 
+		logo: channel.imagen_horizontal || channel.imagen_principal || channel.logo 
+	})).filter(c => c.publicId);
+
+	if (els.channelGrid) {
+		els.channelGrid.replaceChildren(...state.channels.map(channel => {
+			const button = document.createElement('button'); 
+			button.type = 'button'; 
+			button.className = 'channel-card'; 
+			button.innerHTML = `<img class="channel-card-logo" src="${channel.logo}" alt="" loading="lazy"><span class="channel-card-name"></span>`; 
+			button.querySelector('span').textContent = channel.nombre; 
+			button.addEventListener('click', () => play(channel)); 
+			return button;
+		}));
+	}
 }
+
 async function streamUrl(publicId) {
-	const response = await fetch(`${CONFIG.SETUP_API}?token=${encodeURIComponent(state.token)}&public_id=${encodeURIComponent(publicId)}`);
+	const setupUrl = CONFIG.SETUP_API || 'https://veratv-be.vera.com.uy/api/setup';
+	const response = await fetch(`${setupUrl}?token=${encodeURIComponent(state.token)}&public_id=${encodeURIComponent(publicId)}`);
 	if (!response.ok) throw new Error(`SETUP_API_${response.status}`);
-	const data = await response.json(); return data.url?.suggested?.url || data.url_backup?.suggested?.url || (() => { throw new Error('NO_STREAM_URL'); })();
+	
+	const data = await response.json(); 
+	return data.url?.suggested?.url || data.url_backup?.suggested?.url || data.url?.available?.[0]?.playbackUrl?.url || (() => { throw new Error('NO_STREAM_URL'); })();
 }
+
 async function refreshStream() {
 	if (!state.current) return;
-	const url = await streamUrl(state.current.publicId); const video = els.videoPlayer;
+	const url = await streamUrl(state.current.publicId); 
+	const video = els.videoPlayer;
+
 	if (state.hls) state.hls.destroy();
-	if (window.Hls && Hls.isSupported()) { state.hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30, maxBufferLength: 30 }); state.hls.attachMedia(video); state.hls.on(Hls.Events.MANIFEST_PARSED, () => { hideLoading(); video.play().catch(() => {}); }); state.hls.on(Hls.Events.ERROR, (event, data) => { if (!data.fatal) return; if (state.retry++ < (CONFIG.MAX_STREAM_RETRY || 3)) { showLoading('Reconectando...'); refreshStream().catch(() => showPlayerError('Se perdió la señal de este canal.')); } else showPlayerError('Se perdió la señal de este canal.'); }); state.hls.loadSource(url); }
-	else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = url; video.addEventListener('loadedmetadata', hideLoading, { once: true }); }
-	else throw new Error('HLS_UNSUPPORTED');
+
+	if (window.Hls && Hls.isSupported()) { 
+		state.hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30, maxBufferLength: 30 }); 
+		state.hls.attachMedia(video); 
+		state.hls.on(Hls.Events.MANIFEST_PARSED, () => { hideLoading(); video.play().catch(() => {}); }); 
+		state.hls.on(Hls.Events.ERROR, (event, data) => { 
+			if (!data.fatal) return; 
+			if (state.retry++ < (CONFIG.MAX_STREAM_RETRY || 3)) { 
+				showLoading('Reconectando...'); 
+				refreshStream().catch(() => showPlayerError('Se perdió la señal de este canal.')); 
+			} else showPlayerError('Se perdió la señal de este canal.'); 
+		}); 
+		state.hls.loadSource(url); 
+	} else if (video.canPlayType('application/vnd.apple.mpegurl')) { 
+		video.src = url; 
+		video.addEventListener('loadedmetadata', hideLoading, { once: true }); 
+	} else {
+		throw new Error('HLS_UNSUPPORTED');
+	}
+
 	if (state.streamRenew) clearTimeout(state.streamRenew);
+	
 	const expiry = parseStreamExpiry(url);
+	// Renovación 5 minutos (300.000 ms) antes del vencimiento
 	const delay = expiry ? Math.max(expiry * 1000 - Date.now() - (CONFIG.STREAM_RENEW_MARGIN_MS || 300000), 60000) : (CONFIG.STREAM_RENEW_INTERVAL_MS || 12600000);
 	state.streamRenew = setTimeout(() => refreshStream().catch(error => console.warn('No se pudo renovar el stream:', error)), delay);
 }
-async function play(channel) { state.current = channel; state.retry = 0; showScreen('player'); els.playerChannelName.textContent = channel.nombre; showLoading('Sintonizando...'); hidePlayerError(); try { await refreshStream(); } catch (error) { console.error(error); showPlayerError('No se pudo cargar este canal. Puede que la sesión haya vencido.'); } }
-function stop() { if (state.hls) { state.hls.destroy(); state.hls = null; } if (state.streamRenew) { clearTimeout(state.streamRenew); state.streamRenew = null; } els.videoPlayer.pause(); els.videoPlayer.removeAttribute('src'); els.videoPlayer.load(); state.current = null; }
-async function start() { status('Conectando...', 'warn'); try { await createSession(await login()); await loadGrid(); showScreen('grid'); status('En vivo', 'live'); } catch (error) { console.error(error); showGateError(error.message === 'POPUP_BLOCKED' ? 'Permití ventanas emergentes para este sitio.' : 'No se pudo conectar con AntelTV.'); showScreen('gate'); } }
+
+async function play(channel) { 
+	state.current = channel; 
+	state.retry = 0; 
+	showScreen('player'); 
+	if (els.playerChannelName) els.playerChannelName.textContent = channel.nombre; 
+	showLoading('Sintonizando...'); 
+	hidePlayerError(); 
+	try { 
+		await refreshStream(); 
+	} catch (error) { 
+		console.error(error); 
+		showPlayerError('No se pudo cargar este canal. Puede que la sesión haya vencido.'); 
+	} 
+}
+
+function stop() { 
+	if (state.hls) { state.hls.destroy(); state.hls = null; } 
+	if (state.streamRenew) { clearTimeout(state.streamRenew); state.streamRenew = null; } 
+	if (els.videoPlayer) {
+		els.videoPlayer.pause(); 
+		els.videoPlayer.removeAttribute('src'); 
+		els.videoPlayer.load(); 
+	}
+	state.current = null; 
+}
+
+async function start() { 
+	status('Conectando...', 'warn'); 
+	try { 
+		const idToken = await loginDirect();
+		await createSession(idToken); 
+		await loadGrid(); 
+		showScreen('grid'); 
+		status('En vivo', 'live'); 
+	} catch (error) { 
+		console.error(error); 
+		showGateError('No se pudo conectar con AntelTV: ' + error.message); 
+		showScreen('gate'); 
+	} 
+}
+
 function bootstrap() {
 	['clock', 'statusPill', 'resetBtn', 'renewBanner', 'renewBtn', 'gateScreen', 'gateForm', 'gateUser', 'gatePass', 'gateError', 'gridScreen', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer', 'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn'].forEach(id => { els[id] = $(id); });
+	
 	if (els.clock) setInterval(() => { els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false }); }, 1000);
-	els.gateForm?.addEventListener('submit', event => { event.preventDefault(); saveCredentials({ usuario: els.gateUser.value.trim(), password: els.gatePass.value }); els.gateError.hidden = true; start(); });
+	
+	els.gateForm?.addEventListener('submit', event => { 
+		event.preventDefault(); 
+		saveCredentials({ usuario: els.gateUser.value.trim(), password: els.gatePass.value }); 
+		if (els.gateError) els.gateError.hidden = true; 
+		start(); 
+	});
+	
 	els.renewBtn?.addEventListener('click', renewSession);
 	els.backBtn?.addEventListener('click', () => { stop(); showScreen('grid'); });
 	els.playerRetryBtn?.addEventListener('click', () => { hidePlayerError(); if (state.current) play(state.current); });
 	els.retryGridBtn?.addEventListener('click', () => { if (els.gridEmpty) els.gridEmpty.hidden = true; loadGrid().catch(() => { if (els.gridEmpty) els.gridEmpty.hidden = false; }); });
 	els.resetBtn?.addEventListener('click', () => { clearStoredCredentials(); location.reload(); });
+	
 	document.querySelectorAll('[name="password"]').forEach(field => { field.type = 'password'; field.autocomplete = 'current-password'; });
 	setupGridKeyboardNav();
-	if (hasLocalCredentials() || storedCredentials()) start(); else els.gridScreen.hidden = true;
+	
+	start();
 }
+
 document.addEventListener('DOMContentLoaded', bootstrap);
