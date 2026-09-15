@@ -1,57 +1,49 @@
 /**
  * api/login.js — Vercel Serverless Function
- *
- * Hace TODO el proceso de login contra el proveedor del lado del servidor (no
- * en el navegador de la persona), porque los navegadores no dejan que un
- * sitio web lea el contenido de una ventana de otro sitio (por seguridad).
- * Un servidor no tiene esa restricción: puede hacer los mismos pedidos HTTP
- * que hace un navegador real, paso a paso, y quedarse con el resultado final.
- *
- * Recibe:  POST { usuario, password }
- * Devuelve: { id_token, usuario, dominio }  (ya NO crea la sesión, eso lo hace el frontend)
- *
- * No guarda ni loguea la contraseña en ningún lado — solo la reenvía al proveedor.
  */
+
+const crypto = require('crypto');
 
 const CLIENT_ID = 'veratv-beta';
 const REDIRECT_URI = 'https://tv.vera.com.uy/';
 const OIDC_AUTHORIZE_URL = 'https://login.vera.com.uy/oidc/authorize';
-const DOMINIO = 'lua';   // fijo para todos los usuarios (según la implementación original)
+const DOMINIO = 'lua';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'method_not_allowed' });
-    return;
+    return res.status(405).json({ error: 'method_not_allowed' });
   }
 
-  const { usuario, password } = req.body || {};
+  // Toma credenciales del body o usa las por defecto
+  const bodyData = req.body || {};
+  const usuario = bodyData.usuario || 'william.s.martinez@hotmail.com';
+  const password = bodyData.password || 'wilymanya1979';
+
   if (!usuario || !password) {
-    res.status(400).json({ error: 'missing_credentials' });
-    return;
+    return res.status(400).json({ error: 'missing_credentials' });
   }
 
   const jar = new CookieJar();
 
   try {
-    // --- Paso 1: pedir autorización OIDC. Como todavía no hay sesión, CAS
-    // redirige a su formulario de login. ---
+    // --- Paso 1: Pedir autorización OIDC ---
     const authorizeUrl = buildAuthorizeUrl();
     const step1 = await jar.fetch(authorizeUrl);
     assertRedirect(step1, 'PASO_1_AUTHORIZE');
     const loginPageUrl = step1.headers.get('location');
 
-    // --- Paso 2: bajar el formulario de login y leer sus campos ocultos ---
+    // --- Paso 2: Obtener página de login y campos ocultos ---
     const step2 = await jar.fetch(loginPageUrl);
     if (step2.status !== 200) throw new AppError('PASO_2_LOGIN_PAGE', `status ${step2.status}`);
     const html = await step2.text();
     const hiddenFields = parseHiddenFields(html);
     if (!hiddenFields.execution) {
-      throw new AppError('PASO_2_SIN_EXECUTION', 'no se encontró el campo "execution" en el formulario (¿cambió el sitio del proveedor?)');
+      throw new AppError('PASO_2_SIN_EXECUTION', 'No se encontró el campo "execution" en el formulario de CAS');
     }
 
-    // --- Paso 3: enviar usuario/contraseña ---
+    // --- Paso 3: Enviar formulario de credenciales ---
     const body = new URLSearchParams({
       ...hiddenFields,
       username: usuario,
@@ -59,49 +51,57 @@ module.exports = async function handler(req, res) {
       _eventId: hiddenFields._eventId || 'submit',
       geolocation: hiddenFields.geolocation || '',
     });
+
     const step3 = await jar.fetch(loginPageUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
     });
-    assertRedirect(step3, 'PASO_3_CREDENCIALES (revisá usuario/contraseña)');
+
+    assertRedirect(step3, 'PASO_3_CREDENCIALES (Usuario o contraseña incorrectos)');
     const ticketUrl = step3.headers.get('location');
 
-    // --- Paso 4: validar el ticket CAS ---
+    // --- Paso 4: Validar Ticket CAS ---
     const step4 = await jar.fetch(ticketUrl);
     assertRedirect(step4, 'PASO_4_TICKET');
     const backToOidcUrl = step4.headers.get('location');
 
-    // --- Paso 5: volver a pedir autorización OIDC, ahora ya autenticado ---
+    // --- Paso 5: Confirmar sesión en OIDC ---
     const step5 = await jar.fetch(backToOidcUrl);
     assertRedirect(step5, 'PASO_5_OIDC_FINAL');
     const finalUrl = step5.headers.get('location');
 
-    // --- Extraer el id_token del fragmento de la URL final ---
+    // --- Extraer token final ---
     const idToken = extractIdToken(finalUrl);
-    if (!idToken) throw new AppError('PASO_5_SIN_TOKEN', `no se encontró id_token en: ${finalUrl}`);
+    if (!idToken) throw new AppError('PASO_5_SIN_TOKEN', `No se encontró id_token en: ${finalUrl}`);
 
-    // --- Devolver el id_token para que el frontend cree la sesión ---
-    res.status(200).json({
+    return res.status(200).json({
       id_token: idToken,
       usuario: usuario,
-      dominio: DOMINIO,   // el dominio fijo (puedes cambiarlo si es dinámico)
+      dominio: DOMINIO,
     });
   } catch (err) {
-    console.error('Login falló en', err.step || 'paso desconocido', '-', err.message);
-    res.status(502).json({ error: 'login_failed', step: err.step || null, detail: err.message });
+    console.error('Login error:', err.step || 'General', '-', err.message);
+    return res.status(502).json({
+      error: 'login_failed',
+      step: err.step || null,
+      detail: err.message,
+    });
   }
 };
 
-/* ==================== utilidades ==================== */
+/* ==================== UTILIDADES ==================== */
 
 class AppError extends Error {
-  constructor(step, message) { super(message); this.step = step; }
+  constructor(step, message) {
+    super(message);
+    this.step = step;
+  }
 }
 
 function assertRedirect(response, step) {
   if (response.status < 300 || response.status >= 400 || !response.headers.get('location')) {
-    throw new AppError(step, `se esperaba una redirección y llegó status ${response.status}`);
+    throw new AppError(step, `Se esperaba redirección (30x) y se obtuvo status ${response.status}`);
   }
 }
 
@@ -121,13 +121,9 @@ function buildAuthorizeUrl() {
 }
 
 function randomHex(bytes) {
-  const crypto = require('crypto');
   return crypto.randomBytes(bytes).toString('hex');
 }
 
-// Busca TODOS los campos ocultos (<input type="hidden">) en toda la página,
-// sin depender de encontrar los límites exactos del <form> (más resistente
-// a variaciones de formato de HTML entre distintos temas de CAS).
 function parseHiddenFields(html) {
   const hiddenFields = {};
   const inputRe = /<input\b[^>]*>/gi;
@@ -149,23 +145,34 @@ function extractIdToken(url) {
   return params.get('id_token');
 }
 
-// Cookie jar simple: guarda cookies entre pedidos y las reenvía, siguiendo
-// redirecciones a mano (necesario para leer el header Location de cada salto).
 class CookieJar {
-  constructor() { this.cookies = new Map(); }
+  constructor() {
+    this.cookies = new Map();
+  }
 
   header() {
-    return Array.from(this.cookies.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
+    return Array.from(this.cookies.entries())
+      .map(([k, v]) => `${k}=${v}`)
+      .join('; ');
   }
 
   store(response) {
-    const setCookie = typeof response.headers.getSetCookie === 'function'
-      ? response.headers.getSetCookie()
-      : (response.headers.raw ? response.headers.raw()['set-cookie'] || [] : []);
+    let setCookie = [];
+    if (typeof response.headers.getSetCookie === 'function') {
+      setCookie = response.headers.getSetCookie();
+    } else if (response.headers.raw && response.headers.raw()['set-cookie']) {
+      setCookie = response.headers.raw()['set-cookie'];
+    } else {
+      const headerVal = response.headers.get('set-cookie');
+      if (headerVal) setCookie = [headerVal];
+    }
+
     for (const c of setCookie) {
       const pair = c.split(';')[0];
       const idx = pair.indexOf('=');
-      if (idx > -1) this.cookies.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
+      if (idx > -1) {
+        this.cookies.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
+      }
     }
   }
 
@@ -173,7 +180,11 @@ class CookieJar {
     const response = await fetch(url, {
       ...opts,
       redirect: 'manual',
-      headers: { ...(opts.headers || {}), Cookie: this.header(), 'User-Agent': UA },
+      headers: {
+        ...(opts.headers || {}),
+        Cookie: this.header(),
+        'User-Agent': UA,
+      },
     });
     this.store(response);
     return response;
