@@ -313,10 +313,19 @@ function loadIntoPlayer(streamUrl) {
       backBufferLength: 30,
       maxBufferLength: 30,
       xhrSetup: function (xhr, url) {
-        xhr.withCredentials = false;
+        // Enviar cookies entre dominios para incluir 'vxtoken' devuelta por CDN Antel
+        xhr.withCredentials = true;
         try {
           xhr.setRequestHeader('User-Agent', 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Mobile Safari/537.36');
         } catch (e) {}
+      }
+    });
+
+    // Interceptor para reescribir sub-playlists relativas que devuelven canales como VTV Plus
+    hls.on(Hls.Events.LEVEL_LOADING, (evt, data) => {
+      if (data && data.url && !data.url.startsWith('http')) {
+        const baseUrl = streamUrl.substring(0, streamUrl.lastIndexOf('/') + 1);
+        data.url = baseUrl + data.url;
       }
     });
 
@@ -401,7 +410,6 @@ async function bootstrapSession() {
   try {
     await loginAndCreateSession();
     setStatus('En vivo', 'live');
-    // Ir directo a la pantalla de categorías
     showScreen('categories');
   } catch (err) {
     console.error('Error al conectar:', err);
@@ -409,7 +417,6 @@ async function bootstrapSession() {
       els.gateError.textContent = 'Error al conectar: ' + err.message + '. Reintentando...';
       els.gateError.hidden = false;
     }
-    // Reintentar conexión tras 4 segundos
     setTimeout(bootstrapSession, 4000);
   }
 }
@@ -476,7 +483,6 @@ function bootstrap() {
     });
   }
 
-  // Iniciar la sesión directamente al cargar la página
   bootstrapSession();
 }
 
