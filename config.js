@@ -1,18 +1,14 @@
 const CONFIG = {
   LOGIN_API: '/api/login',
-  SETUP_API: 'https://veratv-be.vera.com.uy/api/setup',
+  // Se cambian las URLs remotas por endpoints locales proxy
+  SETUP_API: '/api/setup',
+  GRID_API_BASE: '/api/listas',
 
-  // Base de la API de grillas de contenido. Cada categoría es una lista
-  // distinta dentro del mismo servicio (ver CONFIG.LISTAS).
-  GRID_API_BASE: 'https://cds-frontend.vera.com.uy/api-contenidos/listas',
-  GRID_HEADERS: { 'x-service-id': '3', 'x-frontend-id': '1196', 'x-system-id': '1' },
-
-  // IDs de lista confirmados mirando la red del sitio oficial (anteltv.com.uy).
   LISTAS: {
     canales: 68,
     radios: 221,
     camaras: 139,
-    peliculas: 250, // "Cine Uruguayo" en el menú oficial
+    peliculas: 250,
   },
   CATEGORY_LABELS: {
     canales: 'Canales',
@@ -22,7 +18,7 @@ const CONFIG = {
   },
   CATEGORY_ORDER: ['canales', 'radios', 'camaras', 'peliculas'],
 
-  SESSION_API: 'https://veratv-be.vera.com.uy/api/sesiones',
+  SESSION_API: '/api/sesiones',
   DOMINIO: 'lua',
   SESSION_RENEW_MARGIN_MS: 10 * 60 * 1000,
   STREAM_RENEW_MARGIN_MS: 8 * 60 * 1000,
@@ -31,13 +27,11 @@ const CONFIG = {
     usuario: 'antel_usuario',
     password: 'antel_password_b64',
     lastChannel: 'antel_ultimo_canal',
-    order: 'antel_orden_canales', // se usa para "canales"; otras categorías agregan un sufijo
+    order: 'antel_orden_canales',
   },
 
-  // Sin exclusiones: arreglo vacío para permitir todos los canales.
   EXCLUDED_CHANNELS: [],
 
-  // Orden preferido para la grilla de "Canales".
   CHANNEL_PRIORITY_ORDER: [
     'Antel TV internacional',
     'Antel TV internacional 2',
