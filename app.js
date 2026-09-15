@@ -42,57 +42,87 @@ const PREMIUM_SUBSCRIPTION_DATA = {
   ]
 };
 
-// Fallback de canales
+// Fallback de canales actualizado con tus public_id
 const LOCAL_CHANNELS_DATA = [
   {
-    id: 18014,
-    public_id: "2sh83",
-    nombre: "Canal 7 Punta",
-    nombre_fantasia: "Canal 7 Punta",
-    descripcion: "Canal 7 Punta les ofrece una renovada programación nacional e internacional.",
+    id: 19001,
+    public_id: "2sss2q5v",
+    nombre: "VTV Fútbol 1",
+    nombre_fantasia: "VTV Fútbol 1",
+    descripcion: "Transmisión en vivo de VTV Fútbol 1.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
+    tipo_acceso: "registrado"
+  },
+  {
+    id: 19002,
+    public_id: "2sss2qxr",
+    nombre: "VTV Fútbol 2",
+    nombre_fantasia: "VTV Fútbol 2",
+    descripcion: "Transmisión en vivo de VTV Fútbol 2.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
+    tipo_acceso: "registrado"
+  },
+  {
+    id: 19003,
+    public_id: "2sss2q50",
+    nombre: "AntelTV Internacional 1",
+    nombre_fantasia: "AntelTV Internacional 1",
+    descripcion: "AntelTV Internacional 1 en vivo.",
     imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
     imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
     tipo_acceso: "libre"
   },
   {
-    id: 18015,
-    public_id: "2sh8q",
-    nombre: "A + V",
-    nombre_fantasia: "A + V",
-    descripcion: "A + V nace como una propuesta descentralizadora de televisión para todo el Uruguay.",
-    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/gHn1TnIdZy6JKQogLPIhEK65zdp8Q7nDa4g52KVm.jpeg",
-    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/m6IC68RMVRD7kL9wmjnx2IeCpXhUCY1u3jd1agKd.jpeg",
-    tipo_acceso: "libre"
-  },
-  {
-    id: 18018,
-    public_id: "2sh84",
-    nombre: "Canal 8 Rivera",
-    nombre_fantasia: "Canal 8 Rivera",
-    descripcion: "Canal 8 de Rivera concentra la mayor cantidad de programas de producción departamental.",
+    id: 19004,
+    public_id: "2sss2qxn",
+    nombre: "AntelTV Internacional 2",
+    nombre_fantasia: "AntelTV Internacional 2",
+    descripcion: "AntelTV Internacional 2 en vivo.",
     imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
-    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/FhGQ4GSgaXwV1emZgNIf63lvtXFtrUpxrRLVJrTi.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
     tipo_acceso: "libre"
   },
   {
-    id: 18972,
-    public_id: "2s68s",
-    nombre: "Maroñas Entertainment",
-    nombre_fantasia: "Maroñas Entertainment",
-    descripcion: "Transmisiones hípicas y eventos deportivos de HRU.",
-    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/LEm3NQ3xurKTAK1V6iYHZNE7sMSCQb5o8RqRoTuI.jpeg",
-    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/lujkeHMfgLEMPF9tay1xZB2q1Ycu2oo5DClOVCkK.jpeg",
-    tipo_acceso: "libre"
-  },
-  {
-    id: 18979,
-    public_id: "2s684",
-    nombre: "RT Español",
-    nombre_fantasia: "RT Español",
-    descripcion: "Televisión en vivo desde Rusia y en español por internet 24 horas al día.",
-    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/x7FJVZYddrEzbQRuYjftXyuIYCAHau4djz1TXUse.jpeg",
-    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/0McNkEsNXEFdtpakqZfCk9e2YLgbqfRK5nPOHjCy.jpeg",
+    id: 19005,
+    public_id: "2sss2qb5",
+    nombre: "VTV",
+    nombre_fantasia: "VTV",
+    descripcion: "Canal principal VTV Uruguay.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
     tipo_acceso: "registrado"
+  },
+  {
+    id: 19006,
+    public_id: "2sss2qb9",
+    nombre: "VTV Plus",
+    nombre_fantasia: "VTV Plus",
+    descripcion: "Señal internacional y de eventos VTV Plus.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
+    tipo_acceso: "registrado"
+  },
+  {
+    id: 19007,
+    public_id: "2sss2qbw",
+    nombre: "FixTV",
+    nombre_fantasia: "FixTV",
+    descripcion: "Programación variada en FixTV.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
+    tipo_acceso: "libre"
+  },
+  {
+    id: 19008,
+    public_id: "2snj3",
+    nombre: "Canal 4",
+    nombre_fantasia: "Canal 4",
+    descripcion: "Monte Carlo Televisión - Canal 4 en vivo.",
+    imagen_horizontal: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/ckKtDx8EB5eM2kVT3p5jlPLwxlwfY2Q26b9ryiww.jpeg",
+    imagen_vertical: "https://cds-assets.cdn.antel.net.uy/imagenes/recursos/MagRGS7bO4A8WnHW7hiWhbYXAIWfoTmrrZu5eHMm.jpeg",
+    tipo_acceso: "libre"
   }
 ];
 
