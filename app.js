@@ -70,24 +70,36 @@ function setStatus(text, kind) {
 async function loginAndCreateSession() {
   const creds = getCredentials();
 
+  // Paso 1: Autenticación
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ usuario: creds.usuario, password: creds.password }),
+    headers: { 
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({ 
+      usuario: creds.usuario.trim(), 
+      password: creds.password 
+    }),
   });
 
   if (!res.ok) {
     let detail = 'HTTP ' + res.status;
     try {
       const errData = await res.json();
-      if (errData.detail) detail = `${errData.step ? '[' + errData.step + '] ' : ''}${errData.detail}`;
+      detail = errData.detail || errData.mensaje || errData.error || detail;
     } catch (e) {}
-    throw new Error(detail);
+
+    if (res.status === 403) {
+      throw new Error('403 Prohibido: Usuario/contraseña incorrectos o acceso bloqueado por el servidor.');
+    }
+    throw new Error(`[PASO_1_AUTHORIZE] ${detail}`);
   }
 
   const loginData = await res.json();
   const { id_token, usuario, dominio } = loginData;
 
+  // Paso 2: Creación de sesión
   const sessionRes = await fetch(CONFIG.SESSION_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -135,7 +147,7 @@ async function attemptRenewal() {
     if (state.currentChannel) await refreshStreamUrl();
   } catch (err) {
     console.warn('Renovación automática falló:', err);
-    showRenewBanner(err.message);
+    showRenewBanner();
   }
 }
 
@@ -231,10 +243,6 @@ function applySavedOrder(channels, category) {
   });
 }
 
-function saveChannelOrder() {
-  localStorage.setItem(orderStorageKey(state.currentCategory), JSON.stringify(state.channels.map(c => c.publicId)));
-}
-
 function renderGrid() {
   const grid = els.channelGrid;
   grid.innerHTML = '';
@@ -253,10 +261,6 @@ function renderGrid() {
     `;
 
     card.addEventListener('click', () => {
-      if (state.orderMode) {
-        toggleGrab(card, ch);
-        return;
-      }
       playChannel(ch);
     });
 
@@ -378,15 +382,13 @@ async function bootstrapSession() {
   try {
     await loginAndCreateSession();
     setStatus('En vivo', 'live');
-    // Ir directo a la pantalla de categorías
     showScreen('categories');
   } catch (err) {
     console.error('Error al conectar:', err);
     if (els.gateError) {
-      els.gateError.textContent = 'Error al conectar: ' + err.message + '. Reintentando...';
+      els.gateError.textContent = err.message;
       els.gateError.hidden = false;
     }
-    setTimeout(bootstrapSession, 3000);
   }
 }
 
@@ -452,7 +454,6 @@ function bootstrap() {
     });
   }
 
-  // Iniciar la sesión directamente al cargar la página
   bootstrapSession();
 }
 
