@@ -1,207 +1,753 @@
-/* Antena TV - Todo en uno (Sin dependencias externas) */
+/**
+ * app.js — (REPRODUCTOR TV)
+ * Con arrastre de canales corregido. Grilla usa token en URL + JWT en
+ * Authorization (restaurada la combinación confirmada del 04/08, perdida
+ * el 05/08 al simplificar loadGrid solo a JWT en el header).
+ */
+
 'use strict';
 
-// 1. Configuración global y credenciales integradas
-const APP_CONFIG = {
-	usuario: 'william.s.martinez@hotmail.com',
-	password: 'wilymanya1979',
-	dominio: 'anteltv.com.uy',
-	endpoints: {
-		session: 'https://veratv-be.vera.com.uy/api/sesiones',
-		grid: 'https://veratv-be.vera.com.uy/api/contenidos',
-		setup: 'https://veratv-be.vera.com.uy/api/setup'
-	}
+// Configuración global del reproductor y endpoints de Antel/VeraTV
+const CONFIG = window.ANTENA_CONFIG || {
+  DOMINIO: 'anteltv.com.uy',
+  LOGIN_API: 'https://veratv-be.vera.com.uy/api/login',
+  SESSION_API: 'https://veratv-be.vera.com.uy/api/sesiones',
+  GRID_API_BASE: 'https://veratv-be.vera.com.uy/api/contenidos',
+  SETUP_API: 'https://veratv-be.vera.com.uy/api/setup',
+  GRID_HEADERS: {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
+  },
+  STORAGE_KEYS: {
+    usuario: 'antena_tv_user',
+    password: 'antena_tv_pass',
+    order: 'antena_tv_channel_order'
+  },
+  LISTAS: {
+    canales: 'canales',
+    radios: 'radios',
+    camaras: 'camaras',
+    peliculas: 'peliculas'
+  },
+  CATEGORY_LABELS: {
+    canales: 'Canales en Vivo',
+    radios: 'Radios',
+    camaras: 'Cámaras',
+    peliculas: 'Películas y Series'
+  },
+  EXCLUDED_CHANNELS: [],
+  CHANNEL_PRIORITY_ORDER: [],
+  SESSION_RENEW_MARGIN_MS: 300000,
+  STREAM_RENEW_MARGIN_MS: 300000,
+  MAX_STREAM_RETRY: 3
 };
 
-const state = { token: null, channels: [], current: null, hls: null, retry: 0 };
+const state = {
+  sessionToken: null,
+  jwt: null,           // <--- guardamos el JWT
+  sessionJwtExp: null,
+  currentCategory: null, // 'canales' | 'radios' | 'camaras' | 'peliculas'
+  channels: [],
+  currentChannel: null,
+  hls: null,
+  streamRetryCount: 0,
+  sessionRenewTimer: null,
+  streamRenewTimer: null,
+  orderMode: false,
+  grabbedPublicId: null,
+  dragCtx: null,
+};
+
 const els = {};
 
 function $(id) { return document.getElementById(id); }
 
-function status(text, kind) {
-	if (els.statusPill) {
-		els.statusPill.textContent = text;
-		els.statusPill.className = 'status-pill' + (kind ? ` is-${kind}` : '');
-	}
+function parseJwtPayload(jwt) {
+  try {
+    const b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '=='.slice(0, (4 - (b64.length % 4)) % 4);
+    return JSON.parse(decodeURIComponent(escape(atob(padded))));
+  } catch (e) { return null; }
 }
+
+function parseStreamExpiry(streamUrl) {
+  try {
+    const match = streamUrl.match(/vxttoken=([^,]+),/);
+    if (!match) return null;
+    let b64 = match[1];
+    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+    b64 += '=='.slice(0, (4 - (b64.length % 4)) % 4);
+    const decoded = decodeURIComponent(atob(b64));
+    const expMatch = decoded.match(/expiry=(\d+)/);
+    return expMatch ? parseInt(expMatch[1], 10) : null;
+  } catch (e) { return null; }
+}
+
+function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
+function b64decode(str) { return decodeURIComponent(escape(atob(str))); }
+
+function setStatus(text, kind) {
+  els.statusPill.textContent = text;
+  els.statusPill.className = 'status-pill' + (kind ? ' is-' + kind : '');
+}
+
+function getStoredCreds() {
+  const usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
+  const passB64 = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
+  if (!usuario || !passB64) return null;
+  return { usuario, password: b64decode(passB64) };
+}
+
+function saveCreds(usuario, password) {
+  localStorage.setItem(CONFIG.STORAGE_KEYS.usuario, usuario);
+  localStorage.setItem(CONFIG.STORAGE_KEYS.password, b64encode(password));
+}
+
+function clearCreds() {
+  localStorage.removeItem(CONFIG.STORAGE_KEYS.usuario);
+  localStorage.removeItem(CONFIG.STORAGE_KEYS.password);
+}
+
+async function loginAndCreateSession() {
+  const creds = getStoredCreds();
+  if (!creds) throw new Error('NO_CREDS');
+
+  const res = await fetch(CONFIG.LOGIN_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ usuario: creds.usuario, password: creds.password }),
+  });
+  if (!res.ok) {
+    let detail = 'HTTP ' + res.status;
+    try {
+      const errData = await res.json();
+      if (errData.detail) detail = `${errData.step ? '[' + errData.step + '] ' : ''}${errData.detail}`;
+    } catch (e) {}
+    throw new Error(detail);
+  }
+
+  const loginData = await res.json();
+  const { id_token, usuario, dominio } = loginData;
+
+  const sessionRes = await fetch(CONFIG.SESSION_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      usuario,
+      dominio: dominio || CONFIG.DOMINIO,
+      tipo: 'usuario',
+      autenticacion_jwt: id_token,
+    }),
+  });
+
+  if (!sessionRes.ok) {
+    let detail = 'HTTP ' + sessionRes.status;
+    try {
+      const errData = await sessionRes.json();
+      detail = errData.detail || errData.mensaje || errData.error || detail;
+    } catch (e) {}
+    throw new Error('SESSION_API: ' + detail);
+  }
+
+  const sessionData = await sessionRes.json();
+  
+  // Guardar ambos tokens
+  state.sessionToken = sessionData.token;
+  state.jwt = sessionData.jwt;  // <--- NUEVO: guardar JWT
+  
+  const payload = parseJwtPayload(sessionData.jwt);
+  state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
+  scheduleSessionRenewal();
+  return sessionData;
+}
+
+function scheduleSessionRenewal() {
+  if (state.sessionRenewTimer) clearTimeout(state.sessionRenewTimer);
+  const msUntilExpiry = state.sessionJwtExp * 1000 - Date.now();
+  const delay = Math.max(msUntilExpiry - CONFIG.SESSION_RENEW_MARGIN_MS, 5000);
+  state.sessionRenewTimer = setTimeout(() => attemptRenewal(), delay);
+}
+
+async function attemptRenewal() {
+  try {
+    setStatus('Renovando sesión…', 'warn');
+    await loginAndCreateSession();
+    hideRenewBanner();
+    setStatus('En vivo', 'live');
+    if (state.currentChannel) await refreshStreamUrl();
+  } catch (err) {
+    console.warn('Renovación automática falló:', err);
+    showRenewBanner(err.message);
+  }
+}
+
+function showRenewBanner(detail) {
+  els.renewBanner.hidden = false;
+  if (detail) {
+    els.renewBanner.querySelector('p').lastChild.textContent =
+      ' No pudimos renovarla en segundo plano — tocá el botón para continuar viendo sin cortes. [detalle: ' + detail + ']';
+  }
+  setStatus('Sesión vencida', 'error');
+}
+function hideRenewBanner() {
+  els.renewBanner.hidden = true;
+}
+
+/* ================== GRILLA ================== */
+
+function normalizeName(str) {
+  return (str || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function isExcludedChannel(nombre) {
+  const n = normalizeName(nombre);
+  return CONFIG.EXCLUDED_CHANNELS.some(ex => normalizeName(ex) === n);
+}
+
+function applyDefaultChannelOrder(channels) {
+  const rank = new Map(CONFIG.CHANNEL_PRIORITY_ORDER.map((n, i) => [normalizeName(n), i]));
+  return channels.slice().sort((a, b) => {
+    const ra = rank.has(normalizeName(a.nombre)) ? rank.get(normalizeName(a.nombre)) : Infinity;
+    const rb = rank.has(normalizeName(b.nombre)) ? rank.get(normalizeName(b.nombre)) : Infinity;
+    return ra - rb;
+  });
+}
+
+function orderStorageKey(category) {
+  return category === 'canales'
+    ? CONFIG.STORAGE_KEYS.order
+    : CONFIG.STORAGE_KEYS.order + '_' + category;
+}
+
+async function loadGrid(category) {
+  state.currentCategory = category;
+  const listId = CONFIG.LISTAS[category];
+
+  const url = `${CONFIG.GRID_API_BASE}/${listId}?token=${encodeURIComponent(state.sessionToken)}`;
+  const res = await fetch(url, {
+    headers: {
+      ...CONFIG.GRID_HEADERS,
+      'Authorization': 'Bearer ' + state.jwt
+    }
+  });
+
+  if (!res.ok) {
+    let errorDetail = 'HTTP ' + res.status;
+    try {
+      const errData = await res.json();
+      errorDetail = errData.info || errData.detail || errorDetail;
+    } catch (e) {}
+    throw new Error('GRID_API_' + res.status + ': ' + errorDetail);
+  }
+
+  const data = await res.json();
+  let fetched = (data.contenidos || []).map(c => ({
+    publicId: c.public_id,
+    nombre: c.nombre_fantasia || c.nombre,
+    logo: c.imagen_horizontal || c.imagen_principal,
+  }));
+
+  if (category === 'canales') {
+    fetched = fetched.filter(ch => !isExcludedChannel(ch.nombre));
+  }
+
+  state.channels = applySavedOrder(fetched, category);
+  renderGrid();
+  if (els.gridTitle) els.gridTitle.textContent = CONFIG.CATEGORY_LABELS[category] || '';
+
+  const firstCard = els.channelGrid.querySelector('.channel-card');
+  if (firstCard) firstCard.focus();
+}
+
+function applySavedOrder(channels, category) {
+  const base = category === 'canales' ? applyDefaultChannelOrder(channels) : channels;
+  const raw = localStorage.getItem(orderStorageKey(category));
+  if (!raw) return base;
+  let savedIds;
+  try { savedIds = JSON.parse(raw); } catch (e) { return base; }
+  const rank = new Map(savedIds.map((id, i) => [id, i]));
+  return base.slice().sort((a, b) => {
+    const ra = rank.has(a.publicId) ? rank.get(a.publicId) : Infinity;
+    const rb = rank.has(b.publicId) ? rank.get(b.publicId) : Infinity;
+    return ra - rb;
+  });
+}
+
+function saveChannelOrder() {
+  localStorage.setItem(orderStorageKey(state.currentCategory), JSON.stringify(state.channels.map(c => c.publicId)));
+}
+
+function renderGrid() {
+  const grid = els.channelGrid;
+  grid.innerHTML = '';
+  grid.classList.toggle('order-mode', state.orderMode);
+
+  state.channels.forEach((ch) => {
+    const card = document.createElement('button');
+    card.className = 'channel-card';
+    card.type = 'button';
+    card.setAttribute('role', 'listitem');
+    card.dataset.publicId = ch.publicId;
+    if (state.grabbedPublicId === ch.publicId) card.classList.add('is-grabbed');
+    card.innerHTML = `
+      <img class="channel-card-logo" src="${ch.logo}" alt="" loading="lazy">
+      <span class="channel-card-name">${ch.nombre}</span>
+    `;
+
+    card.addEventListener('click', () => {
+      if (state.orderMode) {
+        toggleGrab(card, ch);
+        return;
+      }
+      playChannel(ch);
+    });
+
+    enableCardDrag(card);
+    grid.appendChild(card);
+  });
+
+  if (state.grabbedPublicId) {
+    const focused = grid.querySelector(`[data-public-id="${cssEscape(state.grabbedPublicId)}"]`);
+    if (focused) focused.focus();
+  }
+}
+
+function cssEscape(str) {
+  return window.CSS && CSS.escape ? CSS.escape(str) : str.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+}
+
+function toggleOrderMode() {
+  state.orderMode = !state.orderMode;
+  state.grabbedPublicId = null;
+  els.orderModeBtn.textContent = state.orderMode ? 'Listo' : 'Organizar orden';
+  els.orderModeBtn.classList.toggle('is-active', state.orderMode);
+  els.orderModeHint.hidden = !state.orderMode;
+  renderGrid();
+}
+
+function toggleGrab(card, ch) {
+  if (state.grabbedPublicId === ch.publicId) {
+    state.grabbedPublicId = null;
+    saveChannelOrder();
+  } else {
+    state.grabbedPublicId = ch.publicId;
+  }
+  renderGrid();
+}
+
+function getColumnCount() {
+  const cards = Array.from(els.channelGrid.children);
+  if (cards.length < 2) return 1;
+  const firstTop = cards[0].offsetTop;
+  let count = 0;
+  for (const c of cards) {
+    if (c.offsetTop === firstTop) count++; else break;
+  }
+  return count || 1;
+}
+
+function moveGrabbedChannel(key) {
+  const idx = state.channels.findIndex(c => c.publicId === state.grabbedPublicId);
+  if (idx === -1) return;
+  const cols = getColumnCount();
+  let delta = 0;
+  if (key === 'ArrowLeft') delta = -1;
+  else if (key === 'ArrowRight') delta = 1;
+  else if (key === 'ArrowUp') delta = -cols;
+  else if (key === 'ArrowDown') delta = cols;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= state.channels.length) return;
+  const [item] = state.channels.splice(idx, 1);
+  state.channels.splice(newIdx, 0, item);
+  saveChannelOrder();
+  renderGrid();
+}
+
+/* ================== ARRASTRE CORREGIDO ================== */
+
+function suppressNextClick() {
+  const handler = (e) => {
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  };
+  document.addEventListener('click', handler, { capture: true, once: true });
+  setTimeout(() => document.removeEventListener('click', handler, true), 400);
+}
+
+function enableCardDrag(card) {
+  card.addEventListener('dragstart', (e) => e.preventDefault());
+
+  card.addEventListener('pointerdown', (e) => {
+    if (!state.orderMode) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+
+    const rect = card.getBoundingClientRect();
+    state.dragCtx = {
+      pointerId: e.pointerId,
+      el: card,
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      moved: false,
+      clone: null,
+    };
+
+    card.setPointerCapture(e.pointerId);
+    card.classList.add('is-dragging');
+  });
+
+  card.addEventListener('pointermove', (e) => {
+    const ctx = state.dragCtx;
+    if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
+
+    if (!ctx.moved) {
+      const dist = Math.hypot(e.clientX - ctx.startX, e.clientY - ctx.startY);
+      if (dist < 6) return;
+      ctx.moved = true;
+    }
+
+    if (!ctx.clone) {
+      ctx.clone = card.cloneNode(true);
+      ctx.clone.style.position = 'fixed';
+      ctx.clone.style.pointerEvents = 'none';
+      ctx.clone.style.opacity = '0.8';
+      ctx.clone.style.zIndex = '9999';
+      ctx.clone.style.width = card.offsetWidth + 'px';
+      ctx.clone.style.boxShadow = '0 8px 30px rgba(0,0,0,0.6)';
+      document.body.appendChild(ctx.clone);
+    }
+
+    ctx.clone.style.left = (e.clientX - ctx.offsetX) + 'px';
+    ctx.clone.style.top = (e.clientY - ctx.offsetY) + 'px';
+
+    card.style.pointerEvents = 'none';
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    card.style.pointerEvents = '';
+    const targetCard = under && under.closest ? under.closest('.channel-card') : null;
+    if (targetCard && targetCard !== card && els.channelGrid.contains(targetCard)) {
+      els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
+      targetCard.classList.add('drag-over');
+    } else {
+      els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
+    }
+  });
+
+  const endDrag = (e) => {
+    const ctx = state.dragCtx;
+    if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
+
+    try { card.releasePointerCapture(e.pointerId); } catch (err) {}
+
+    if (ctx.clone) {
+      ctx.clone.remove();
+      ctx.clone = null;
+    }
+
+    card.classList.remove('is-dragging');
+    els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
+
+    if (ctx.moved) {
+      suppressNextClick();
+
+      card.style.pointerEvents = 'none';
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      card.style.pointerEvents = '';
+      const targetCard = under && under.closest ? under.closest('.channel-card') : null;
+
+      if (targetCard && targetCard !== card && els.channelGrid.contains(targetCard)) {
+        const fromId = card.dataset.publicId;
+        const toId = targetCard.dataset.publicId;
+        const fromIdx = state.channels.findIndex(c => c.publicId === fromId);
+        const toIdx = state.channels.findIndex(c => c.publicId === toId);
+        if (fromIdx !== -1 && toIdx !== -1) {
+          const [item] = state.channels.splice(fromIdx, 1);
+          state.channels.splice(toIdx, 0, item);
+          saveChannelOrder();
+          if (fromIdx < toIdx) {
+            els.channelGrid.insertBefore(card, targetCard.nextSibling);
+          } else {
+            els.channelGrid.insertBefore(card, targetCard);
+          }
+        }
+      }
+    }
+
+    state.dragCtx = null;
+  };
+
+  card.addEventListener('pointerup', endDrag);
+  card.addEventListener('pointercancel', endDrag);
+}
+
+/* ================== NAVEGACIÓN TECLADO ================== */
+
+function setupGridKeyboardNav() {
+  els.orderModeBtn.addEventListener('click', toggleOrderMode);
+
+  els.channelGrid.addEventListener('keydown', (e) => {
+    const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    if (arrowKeys.indexOf(e.key) === -1) return;
+
+    if (state.orderMode && state.grabbedPublicId) {
+      e.preventDefault();
+      moveGrabbedChannel(e.key);
+      return;
+    }
+
+    const cards = Array.from(els.channelGrid.querySelectorAll('.channel-card'));
+    const current = document.activeElement;
+    const idx = cards.indexOf(current);
+    if (idx === -1) return;
+    e.preventDefault();
+
+    const currentRect = cards[idx].getBoundingClientRect();
+    let best = null, bestDist = Infinity;
+
+    cards.forEach((card, i) => {
+      if (i === idx) return;
+      const r = card.getBoundingClientRect();
+      const dx = (r.left + r.width / 2) - (currentRect.left + currentRect.width / 2);
+      const dy = (r.top + r.height / 2) - (currentRect.top + currentRect.height / 2);
+      let valid = false;
+      if (e.key === 'ArrowRight' && dx > 4) valid = true;
+      if (e.key === 'ArrowLeft' && dx < -4) valid = true;
+      if (e.key === 'ArrowDown' && dy > 4) valid = true;
+      if (e.key === 'ArrowUp' && dy < -4) valid = true;
+      if (!valid) return;
+      const dist = Math.abs(dx) + Math.abs(dy) * 1.4;
+      if (dist < bestDist) { bestDist = dist; best = card; }
+    });
+    if (best) best.focus();
+  });
+}
+
+/* ================== REPRODUCTOR ================== */
+
+async function playChannel(ch) {
+  state.currentChannel = ch;
+  state.streamRetryCount = 0;
+  showScreen('player');
+  els.playerChannelName.textContent = ch.nombre;
+  showPlayerLoading('Sintonizando…');
+  hidePlayerError();
+
+  try {
+    await refreshStreamUrl();
+  } catch (err) {
+    console.error(err);
+    showPlayerError('No se pudo cargar este canal.');
+  }
+}
+
+async function fetchStreamUrl(publicId) {
+  const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('SETUP_API_' + res.status);
+  const data = await res.json();
+  const primary = data.url && data.url.suggested && data.url.suggested.url;
+  const backup = data.url_backup && data.url_backup.suggested && data.url_backup.suggested.url;
+  if (!primary && !backup) throw new Error('NO_STREAM_URL');
+  return primary || backup;
+}
+
+async function refreshStreamUrl() {
+  if (!state.currentChannel) return;
+  const streamUrl = await fetchStreamUrl(state.currentChannel.publicId);
+  loadIntoPlayer(streamUrl);
+  scheduleStreamRenewal(streamUrl);
+}
+
+function loadIntoPlayer(streamUrl) {
+  const video = els.videoPlayer;
+  if (state.hls) { state.hls.destroy(); state.hls = null; }
+
+  if (window.Hls && Hls.isSupported()) {
+    const hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30, maxBufferLength: 30 });
+    state.hls = hls;
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hidePlayerLoading();
+      video.play().catch(() => {});
+    });
+    hls.on(Hls.Events.ERROR, (evt, data) => {
+      if (!data.fatal) return;
+      console.warn('Error fatal de HLS:', data.type);
+      if (state.streamRetryCount < CONFIG.MAX_STREAM_RETRY) {
+        state.streamRetryCount++;
+        showPlayerLoading('Reconectando…');
+        refreshStreamUrl().catch(() => showPlayerError('Se perdió la señal de este canal.'));
+      } else {
+        showPlayerError('Se perdió la señal de este canal.');
+      }
+    });
+    hls.loadSource(streamUrl);
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = streamUrl;
+    video.addEventListener('loadedmetadata', hidePlayerLoading, { once: true });
+  } else {
+    showPlayerError('Este navegador no soporta reproducción HLS.');
+  }
+}
+
+function scheduleStreamRenewal(streamUrl) {
+  if (state.streamRenewTimer) clearTimeout(state.streamRenewTimer);
+  const expiry = parseStreamExpiry(streamUrl);
+  let delay;
+  if (expiry) {
+    delay = Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000);
+  } else {
+    delay = 3.5 * 60 * 60 * 1000;
+  }
+  state.streamRenewTimer = setTimeout(() => {
+    refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
+  }, delay);
+}
+
+function stopPlayback() {
+  if (state.hls) { state.hls.destroy(); state.hls = null; }
+  if (state.streamRenewTimer) { clearTimeout(state.streamRenewTimer); state.streamRenewTimer = null; }
+  els.videoPlayer.pause();
+  els.videoPlayer.removeAttribute('src');
+  els.videoPlayer.load();
+  state.currentChannel = null;
+}
+
+function showPlayerLoading(text) {
+  els.loadingText.textContent = text || 'Cargando…';
+  els.loadingOverlay.classList.add('active');
+}
+function hidePlayerLoading() { els.loadingOverlay.classList.remove('active'); }
+function showPlayerError(text) {
+  hidePlayerLoading();
+  els.playerErrorText.textContent = text;
+  els.playerErrorOverlay.hidden = false;
+}
+function hidePlayerError() { els.playerErrorOverlay.hidden = true; }
+
+/* ================== NAVEGACIÓN PANTALLAS ================== */
 
 function showScreen(name) {
-	if (els.gateScreen) els.gateScreen.hidden = name !== 'gate';
-	if (els.gridScreen) els.gridScreen.hidden = name !== 'grid';
-	if (els.playerScreen) els.playerScreen.hidden = name !== 'player';
+  els.gateScreen.hidden = name !== 'gate';
+  els.categoryScreen.hidden = name !== 'categories';
+  els.gridScreen.hidden = name !== 'grid';
+  els.playerScreen.hidden = name !== 'player';
+  window.scrollTo(0, 0);
 }
 
-function showLoading(text) {
-	if (els.loadingText) els.loadingText.textContent = text || 'Cargando...';
-	if (els.loadingOverlay) els.loadingOverlay.classList.add('active');
+/* ================== ARRANQUE ================== */
+
+async function bootstrapSession() {
+  setStatus('Conectando…', 'warn');
+  try {
+    await loginAndCreateSession();
+    setStatus('En vivo', 'live');
+    showScreen('categories');
+    els.resetBtn.hidden = false;
+  } catch (err) {
+    console.error('Error al conectar:', err);
+    showGateMessage('No se pudo conectar. Revisá tu usuario/contraseña e intentá de nuevo. [detalle: ' + err.message + ']');
+    showScreen('gate');
+    renderGateForCreds();
+  }
 }
 
-function hideLoading() { 
-	if (els.loadingOverlay) els.loadingOverlay.classList.remove('active'); 
+function showGateMessage(msg) {
+  els.gateError.textContent = msg;
+  els.gateError.hidden = false;
 }
 
-function showPlayerError(text) {
-	hideLoading();
-	if (els.playerErrorText) els.playerErrorText.textContent = text;
-	if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = false;
-}
-
-function hidePlayerError() { 
-	if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = true; 
-}
-
-function showGateError(text) {
-	if (els.gateError) {
-		els.gateError.textContent = text;
-		els.gateError.hidden = false;
-	}
-}
-
-// 2. Creación de sesión directa en VeraTV sin auth externa ni popups
-async function createSession() {
-	try {
-		const res = await fetch(APP_CONFIG.endpoints.session, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-			body: JSON.stringify({
-				usuario: APP_CONFIG.usuario,
-				password: APP_CONFIG.password,
-				dominio: APP_CONFIG.dominio,
-				tipo: 'usuario'
-			})
-		});
-
-		if (res.ok) {
-			const data = await res.json();
-			state.token = data.token;
-			return;
-		}
-	} catch (e) {
-		console.warn('Fallo intento directo, usando sesión pública...', e);
-	}
-
-	// Fallback automático a token público/anónimo si el servidor bloquea el login
-	const anonRes = await fetch(APP_CONFIG.endpoints.session, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ dominio: APP_CONFIG.dominio, tipo: 'anonimo' })
-	});
-
-	if (!anonRes.ok) throw new Error('No se pudo establecer sesión con VeraTV');
-	const anonData = await anonRes.json();
-	state.token = anonData.token;
-}
-
-// 3. Carga de lista de canales
-async function loadGrid() {
-	const res = await fetch(`${APP_CONFIG.endpoints.grid}?token=${encodeURIComponent(state.token || '')}`);
-	if (!res.ok) throw new Error(`Error cargando lista (${res.status})`);
-
-	const data = await res.json();
-	const items = data.contenidos || data.canales || (Array.isArray(data) ? data : []);
-
-	state.channels = items.map(channel => ({
-		publicId: channel.public_id || channel.id,
-		nombre: channel.nombre_fantasia || channel.nombre,
-		logo: channel.imagen_horizontal || channel.imagen_principal || channel.logo
-	})).filter(c => c.publicId);
-
-	if (els.channelGrid) {
-		els.channelGrid.replaceChildren(...state.channels.map(channel => {
-			const button = document.createElement('button');
-			button.type = 'button';
-			button.className = 'channel-card';
-			button.innerHTML = `<img class="channel-card-logo" src="${channel.logo || ''}" alt="" loading="lazy"><span class="channel-card-name"></span>`;
-			button.querySelector('span').textContent = channel.nombre;
-			button.addEventListener('click', () => play(channel));
-			return button;
-		}));
-	}
-}
-
-// 4. Obtención de señal m3u8 del canal seleccionado
-async function getStreamUrl(publicId) {
-	const res = await fetch(`${APP_CONFIG.endpoints.setup}?token=${encodeURIComponent(state.token || '')}&public_id=${encodeURIComponent(publicId)}`);
-	if (!res.ok) throw new Error('No se pudo obtener el stream');
-
-	const data = await res.json();
-	return data.url?.suggested?.url || data.url_backup?.suggested?.url || data.url?.available?.[0]?.playbackUrl?.url;
-}
-
-async function refreshStream() {
-	if (!state.current) return;
-	const url = await getStreamUrl(state.current.publicId);
-	if (!url) throw new Error('Señal no disponible');
-
-	const video = els.videoPlayer;
-	if (state.hls) state.hls.destroy();
-
-	if (window.Hls && Hls.isSupported()) {
-		state.hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-		state.hls.attachMedia(video);
-		state.hls.on(Hls.Events.MANIFEST_PARSED, () => { hideLoading(); video.play().catch(() => {}); });
-		state.hls.on(Hls.Events.ERROR, (event, data) => {
-			if (data.fatal && state.retry++ < 3) {
-				showLoading('Reconectando...');
-				refreshStream().catch(() => showPlayerError('Error en la transmisión.'));
-			}
-		});
-		state.hls.loadSource(url);
-	} else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-		video.src = url;
-		video.addEventListener('loadedmetadata', hideLoading, { once: true });
-	}
-}
-
-async function play(channel) {
-	state.current = channel;
-	state.retry = 0;
-	showScreen('player');
-	if (els.playerChannelName) els.playerChannelName.textContent = channel.nombre;
-	showLoading('Sintonizando...');
-	hidePlayerError();
-	try {
-		await refreshStream();
-	} catch (error) {
-		showPlayerError('No se pudo reproducir este canal.');
-	}
-}
-
-function stop() {
-	if (state.hls) { state.hls.destroy(); state.hls = null; }
-	if (els.videoPlayer) {
-		els.videoPlayer.pause();
-		els.videoPlayer.removeAttribute('src');
-		els.videoPlayer.load();
-	}
-	state.current = null;
-}
-
-// 5. Arranque automático directo
-async function start() {
-	status('Conectando...', 'warn');
-	try {
-		await createSession();
-		await loadGrid();
-		showScreen('grid');
-		status('En vivo', 'live');
-	} catch (error) {
-		console.error(error);
-		showGateError('Error al ingresar: ' + error.message);
-		showScreen('gate');
-	}
+function renderGateForCreds() {
+  const creds = getStoredCreds();
+  if (!creds) return;
+  $('gateForm').hidden = true;
+  let btn = $('gateConnectBtn');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'gateConnectBtn';
+    btn.className = 'btn-primary btn-block';
+    btn.textContent = 'Conectar con ' + creds.usuario;
+    btn.style.marginTop = '18px';
+    btn.addEventListener('click', () => { els.gateError.hidden = true; bootstrapSession(); });
+    $('gateForm').insertAdjacentElement('afterend', btn);
+  }
 }
 
 function bootstrap() {
-	['clock', 'statusPill', 'resetBtn', 'renewBanner', 'renewBtn', 'gateScreen', 'gateForm', 'gateUser', 'gatePass', 'gateError', 'gridScreen', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer', 'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn'].forEach(id => { els[id] = $(id); });
+  [
+    'clock', 'statusPill', 'resetBtn', 'renewBanner', 'renewBtn',
+    'gateScreen', 'gateForm', 'gateUser', 'gatePass', 'gateError',
+    'categoryScreen',
+    'gridScreen', 'gridTitle', 'backToCategoriesBtn', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'orderModeBtn', 'orderModeHint',
+    'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer',
+    'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn',
+  ].forEach(id => { els[id] = $(id); });
 
-	if (els.clock) setInterval(() => { els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false }); }, 1000);
+  setInterval(() => {
+    els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
+  }, 1000);
 
-	els.backBtn?.addEventListener('click', () => { stop(); showScreen('grid'); });
-	els.playerRetryBtn?.addEventListener('click', () => { hidePlayerError(); if (state.current) play(state.current); });
-	els.retryGridBtn?.addEventListener('click', () => { loadGrid().catch(() => {}); });
+  els.gateForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveCreds(els.gateUser.value.trim(), els.gatePass.value);
+    els.gateError.hidden = true;
+    bootstrapSession();
+  });
 
-	start();
+  els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(); });
+  els.resetBtn.addEventListener('click', () => {
+    if (!confirm('¿Olvidar la cuenta guardada en este dispositivo?')) return;
+    clearCreds();
+    location.reload();
+  });
+  els.backBtn.addEventListener('click', () => {
+    stopPlayback();
+    showScreen('grid');
+    const currentId = state.currentChannel ? state.currentChannel.publicId : null;
+    const cardToFocus = (currentId && els.channelGrid.querySelector(`[data-public-id="${cssEscape(currentId)}"]`))
+      || els.channelGrid.querySelector('.channel-card');
+    if (cardToFocus) cardToFocus.focus();
+  });
+  els.playerRetryBtn.addEventListener('click', () => {
+    hidePlayerError();
+    if (state.currentChannel) playChannel(state.currentChannel);
+  });
+  els.retryGridBtn.addEventListener('click', () => {
+    els.gridEmpty.hidden = true;
+    loadGrid(state.currentCategory).catch(() => { els.gridEmpty.hidden = false; });
+  });
+
+  els.categoryScreen.querySelectorAll('[data-category]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const category = btn.dataset.category;
+      if (state.orderMode) toggleOrderMode();
+      showScreen('grid');
+      els.gridEmpty.hidden = true;
+      els.channelGrid.innerHTML = '';
+      loadGrid(category).catch(err => {
+        console.error('Error al cargar ' + category + ':', err);
+        els.gridEmpty.hidden = false;
+      });
+    });
+  });
+
+  els.backToCategoriesBtn.addEventListener('click', () => {
+    if (state.orderMode) toggleOrderMode();
+    showScreen('categories');
+  });
+
+  setupGridKeyboardNav();
+
+  const creds = getStoredCreds();
+  if (creds) {
+    bootstrapSession();
+  } else {
+    showScreen('gate');
+  }
 }
 
 document.addEventListener('DOMContentLoaded', bootstrap);
