@@ -1,13 +1,19 @@
-/* Antena TV. Requiere index.html, config.js, callback.html y Hls.js. */
+/* Antena TV - Todo en uno (Sin dependencias externas) */
 'use strict';
 
-const CONFIG = window.ANTENA_CONFIG || {};
-const localConfig = window.ANTENA_LOCAL_CONFIG || {
+// 1. Configuración global y credenciales integradas
+const APP_CONFIG = {
 	usuario: 'william.s.martinez@hotmail.com',
-	password: 'wilymanya1979'
+	password: 'wilymanya1979',
+	dominio: 'anteltv.com.uy',
+	endpoints: {
+		session: 'https://veratv-be.vera.com.uy/api/sesiones',
+		grid: 'https://veratv-be.vera.com.uy/api/contenidos',
+		setup: 'https://veratv-be.vera.com.uy/api/setup'
+	}
 };
 
-const state = { token: null, jwtExp: 0, channels: [], current: null, hls: null, retry: 0, renew: null, streamRenew: null };
+const state = { token: null, channels: [], current: null, hls: null, retry: 0 };
 const els = {};
 
 function $(id) { return document.getElementById(id); }
@@ -30,7 +36,9 @@ function showLoading(text) {
 	if (els.loadingOverlay) els.loadingOverlay.classList.add('active');
 }
 
-function hideLoading() { if (els.loadingOverlay) els.loadingOverlay.classList.remove('active'); }
+function hideLoading() { 
+	if (els.loadingOverlay) els.loadingOverlay.classList.remove('active'); 
+}
 
 function showPlayerError(text) {
 	hideLoading();
@@ -38,7 +46,9 @@ function showPlayerError(text) {
 	if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = false;
 }
 
-function hidePlayerError() { if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = true; }
+function hidePlayerError() { 
+	if (els.playerErrorOverlay) els.playerErrorOverlay.hidden = true; 
+}
 
 function showGateError(text) {
 	if (els.gateError) {
@@ -47,157 +57,150 @@ function showGateError(text) {
 	}
 }
 
-/**
- * Genera la sesión conectando directamente al backend de Antel/Vera
- */
+// 2. Creación de sesión directa en VeraTV sin auth externa ni popups
 async function createSession() {
-	const sessionUrl = CONFIG.SESSION_API || 'https://veratv-be.vera.com.uy/api/sesiones';
-
-	// Enviamos la petición sin pasar por proxies que bloquee el navegador
-	const response = await fetch(sessionUrl, { 
-		method: 'POST', 
-		headers: { 
-			'Content-Type': 'application/json',
-			'Accept': 'application/json'
-		}, 
-		body: JSON.stringify({ 
-			usuario: localConfig.usuario,
-			password: localConfig.password,
-			dominio: CONFIG.DOMINIO || 'anteltv.com.uy', 
-			tipo: 'usuario' 
-		}) 
-	});
-
-	// Si el backend requiere sesión anónima o falla el auth directo, obtenemos token público
-	if (!response.ok) {
-		const anonRes = await fetch(sessionUrl, {
+	try {
+		const res = await fetch(APP_CONFIG.endpoints.session, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ dominio: CONFIG.DOMINIO || 'anteltv.com.uy', tipo: 'anonimo' })
+			headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+			body: JSON.stringify({
+				usuario: APP_CONFIG.usuario,
+				password: APP_CONFIG.password,
+				dominio: APP_CONFIG.dominio,
+				tipo: 'usuario'
+			})
 		});
-		if (!anonRes.ok) throw new Error(`SESSION_FAILED_${response.status}`);
-		const anonData = await anonRes.json();
-		state.token = anonData.token;
-		return;
+
+		if (res.ok) {
+			const data = await res.json();
+			state.token = data.token;
+			return;
+		}
+	} catch (e) {
+		console.warn('Fallo intento directo, usando sesión pública...', e);
 	}
 
-	const data = await response.json(); 
-	state.token = data.token;
+	// Fallback automático a token público/anónimo si el servidor bloquea el login
+	const anonRes = await fetch(APP_CONFIG.endpoints.session, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ dominio: APP_CONFIG.dominio, tipo: 'anonimo' })
+	});
+
+	if (!anonRes.ok) throw new Error('No se pudo establecer sesión con VeraTV');
+	const anonData = await anonRes.json();
+	state.token = anonData.token;
 }
 
+// 3. Carga de lista de canales
 async function loadGrid() {
-	const baseUrl = CONFIG.GRID_API || 'https://veratv-be.vera.com.uy/api/contenidos';
-	const response = await fetch(`${baseUrl}?token=${encodeURIComponent(state.token || '')}`);
-	
-	if (!response.ok) throw new Error(`GRID_ERROR_${response.status}`);
-	
-	const data = await response.json(); 
+	const res = await fetch(`${APP_CONFIG.endpoints.grid}?token=${encodeURIComponent(state.token || '')}`);
+	if (!res.ok) throw new Error(`Error cargando lista (${res.status})`);
+
+	const data = await res.json();
 	const items = data.contenidos || data.canales || (Array.isArray(data) ? data : []);
-	
-	state.channels = items.map(channel => ({ 
-		publicId: channel.public_id || channel.id, 
-		nombre: channel.nombre_fantasia || channel.nombre, 
-		logo: channel.imagen_horizontal || channel.imagen_principal || channel.logo 
+
+	state.channels = items.map(channel => ({
+		publicId: channel.public_id || channel.id,
+		nombre: channel.nombre_fantasia || channel.nombre,
+		logo: channel.imagen_horizontal || channel.imagen_principal || channel.logo
 	})).filter(c => c.publicId);
 
 	if (els.channelGrid) {
 		els.channelGrid.replaceChildren(...state.channels.map(channel => {
-			const button = document.createElement('button'); 
-			button.type = 'button'; 
-			button.className = 'channel-card'; 
-			button.innerHTML = `<img class="channel-card-logo" src="${channel.logo || ''}" alt="" loading="lazy"><span class="channel-card-name"></span>`; 
-			button.querySelector('span').textContent = channel.nombre; 
-			button.addEventListener('click', () => play(channel)); 
+			const button = document.createElement('button');
+			button.type = 'button';
+			button.className = 'channel-card';
+			button.innerHTML = `<img class="channel-card-logo" src="${channel.logo || ''}" alt="" loading="lazy"><span class="channel-card-name"></span>`;
+			button.querySelector('span').textContent = channel.nombre;
+			button.addEventListener('click', () => play(channel));
 			return button;
 		}));
 	}
 }
 
-async function streamUrl(publicId) {
-	const setupUrl = CONFIG.SETUP_API || 'https://veratv-be.vera.com.uy/api/setup';
-	const response = await fetch(`${setupUrl}?token=${encodeURIComponent(state.token || '')}&public_id=${encodeURIComponent(publicId)}`);
-	
-	if (!response.ok) throw new Error(`SETUP_API_${response.status}`);
-	
-	const data = await response.json(); 
-	return data.url?.suggested?.url || data.url_backup?.suggested?.url || data.url?.available?.[0]?.playbackUrl?.url || (() => { throw new Error('NO_STREAM_URL'); })();
+// 4. Obtención de señal m3u8 del canal seleccionado
+async function getStreamUrl(publicId) {
+	const res = await fetch(`${APP_CONFIG.endpoints.setup}?token=${encodeURIComponent(state.token || '')}&public_id=${encodeURIComponent(publicId)}`);
+	if (!res.ok) throw new Error('No se pudo obtener el stream');
+
+	const data = await res.json();
+	return data.url?.suggested?.url || data.url_backup?.suggested?.url || data.url?.available?.[0]?.playbackUrl?.url;
 }
 
 async function refreshStream() {
 	if (!state.current) return;
-	const url = await streamUrl(state.current.publicId); 
-	const video = els.videoPlayer;
+	const url = await getStreamUrl(state.current.publicId);
+	if (!url) throw new Error('Señal no disponible');
 
+	const video = els.videoPlayer;
 	if (state.hls) state.hls.destroy();
 
-	if (window.Hls && Hls.isSupported()) { 
-		state.hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 30, maxBufferLength: 30 }); 
-		state.hls.attachMedia(video); 
-		state.hls.on(Hls.Events.MANIFEST_PARSED, () => { hideLoading(); video.play().catch(() => {}); }); 
-		state.hls.on(Hls.Events.ERROR, (event, data) => { 
-			if (!data.fatal) return; 
-			if (state.retry++ < (CONFIG.MAX_STREAM_RETRY || 3)) { 
-				showLoading('Reconectando...'); 
-				refreshStream().catch(() => showPlayerError('Se perdió la señal de este canal.')); 
-			} else showPlayerError('Se perdió la señal de este canal.'); 
-		}); 
-		state.hls.loadSource(url); 
-	} else if (video.canPlayType('application/vnd.apple.mpegurl')) { 
-		video.src = url; 
-		video.addEventListener('loadedmetadata', hideLoading, { once: true }); 
-	} else {
-		throw new Error('HLS_UNSUPPORTED');
+	if (window.Hls && Hls.isSupported()) {
+		state.hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+		state.hls.attachMedia(video);
+		state.hls.on(Hls.Events.MANIFEST_PARSED, () => { hideLoading(); video.play().catch(() => {}); });
+		state.hls.on(Hls.Events.ERROR, (event, data) => {
+			if (data.fatal && state.retry++ < 3) {
+				showLoading('Reconectando...');
+				refreshStream().catch(() => showPlayerError('Error en la transmisión.'));
+			}
+		});
+		state.hls.loadSource(url);
+	} else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+		video.src = url;
+		video.addEventListener('loadedmetadata', hideLoading, { once: true });
 	}
 }
 
-async function play(channel) { 
-	state.current = channel; 
-	state.retry = 0; 
-	showScreen('player'); 
-	if (els.playerChannelName) els.playerChannelName.textContent = channel.nombre; 
-	showLoading('Sintonizando...'); 
-	hidePlayerError(); 
-	try { 
-		await refreshStream(); 
-	} catch (error) { 
-		console.error(error); 
-		showPlayerError('No se pudo cargar este canal.'); 
-	} 
+async function play(channel) {
+	state.current = channel;
+	state.retry = 0;
+	showScreen('player');
+	if (els.playerChannelName) els.playerChannelName.textContent = channel.nombre;
+	showLoading('Sintonizando...');
+	hidePlayerError();
+	try {
+		await refreshStream();
+	} catch (error) {
+		showPlayerError('No se pudo reproducir este canal.');
+	}
 }
 
-function stop() { 
-	if (state.hls) { state.hls.destroy(); state.hls = null; } 
+function stop() {
+	if (state.hls) { state.hls.destroy(); state.hls = null; }
 	if (els.videoPlayer) {
-		els.videoPlayer.pause(); 
-		els.videoPlayer.removeAttribute('src'); 
-		els.videoPlayer.load(); 
+		els.videoPlayer.pause();
+		els.videoPlayer.removeAttribute('src');
+		els.videoPlayer.load();
 	}
-	state.current = null; 
+	state.current = null;
 }
 
-async function start() { 
-	status('Conectando...', 'warn'); 
-	try { 
-		await createSession(); 
-		await loadGrid(); 
-		showScreen('grid'); 
-		status('En vivo', 'live'); 
-	} catch (error) { 
-		console.error('Error de inicio:', error); 
-		showGateError('No se pudo conectar: ' + error.message); 
-		showScreen('gate'); 
-	} 
+// 5. Arranque automático directo
+async function start() {
+	status('Conectando...', 'warn');
+	try {
+		await createSession();
+		await loadGrid();
+		showScreen('grid');
+		status('En vivo', 'live');
+	} catch (error) {
+		console.error(error);
+		showGateError('Error al ingresar: ' + error.message);
+		showScreen('gate');
+	}
 }
 
 function bootstrap() {
 	['clock', 'statusPill', 'resetBtn', 'renewBanner', 'renewBtn', 'gateScreen', 'gateForm', 'gateUser', 'gatePass', 'gateError', 'gridScreen', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer', 'loadingOverlay', 'loadingText', 'playerErrorOverlay', 'playerErrorText', 'playerRetryBtn'].forEach(id => { els[id] = $(id); });
-	
+
 	if (els.clock) setInterval(() => { els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false }); }, 1000);
-	
+
 	els.backBtn?.addEventListener('click', () => { stop(); showScreen('grid'); });
 	els.playerRetryBtn?.addEventListener('click', () => { hidePlayerError(); if (state.current) play(state.current); });
-	els.retryGridBtn?.addEventListener('click', () => { if (els.gridEmpty) els.gridEmpty.hidden = true; loadGrid().catch(() => { if (els.gridEmpty) els.gridEmpty.hidden = false; }); });
-	
+	els.retryGridBtn?.addEventListener('click', () => { loadGrid().catch(() => {}); });
+
 	start();
 }
 
