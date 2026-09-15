@@ -1,15 +1,13 @@
 /**
  * app.js — (REPRODUCTOR TV)
- * Inicio de sesión automático sin pantalla de login.
+ * Inicio de sesión automático forzado sin pantalla de Login.
  */
 
 'use strict';
 
-// Credenciales ocultas en Base64
-const AUTH_CREDENTIALS = {
-  u: 'd2lsbGlhbS5zLm1hcnRpbmV6QGhvdG1haWwuY29t', // william.s.martinez@hotmail.com
-  p: 'd2lseW1hbnlhMTk3OQ=='                       // wilymanya1979
-};
+// Credenciales
+const DEFAULT_USER = 'william.s.martinez@hotmail.com';
+const DEFAULT_PASS = 'wilymanya1979';
 
 const state = {
   sessionToken: null,
@@ -31,23 +29,15 @@ const els = {};
 
 function $(id) { return document.getElementById(id); }
 
-function b64encode(str) { return btoa(unescape(encodeURIComponent(str))); }
-function b64decode(str) { return decodeURIComponent(escape(atob(str))); }
-
-function getStoredCreds() {
+function getCredentials() {
   const userKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.usuario) || 'tv_user';
   const passKey = (CONFIG.STORAGE_KEYS && CONFIG.STORAGE_KEYS.password) || 'tv_pass';
 
-  let usuario = localStorage.getItem(userKey);
-  let passB64 = localStorage.getItem(passKey);
+  // Forzar siempre las credenciales correctas en LocalStorage
+  localStorage.setItem(userKey, DEFAULT_USER);
+  localStorage.setItem(passKey, btoa(DEFAULT_PASS));
 
-  if (!usuario || !passB64) {
-    usuario = b64decode(AUTH_CREDENTIALS.u);
-    passB64 = AUTH_CREDENTIALS.p;
-    localStorage.setItem(userKey, usuario);
-    localStorage.setItem(passKey, passB64);
-  }
-  return { usuario, password: b64decode(passB64) };
+  return { usuario: DEFAULT_USER, password: DEFAULT_PASS };
 }
 
 function parseJwtPayload(jwt) {
@@ -78,7 +68,7 @@ function setStatus(text, kind) {
 }
 
 async function loginAndCreateSession() {
-  const creds = getStoredCreds();
+  const creds = getCredentials();
 
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
@@ -149,7 +139,7 @@ async function attemptRenewal() {
   }
 }
 
-function showRenewBanner(detail) {
+function showRenewBanner() {
   if (els.renewBanner) els.renewBanner.hidden = false;
   setStatus('Sesión vencida', 'error');
 }
@@ -270,224 +260,7 @@ function renderGrid() {
       playChannel(ch);
     });
 
-    enableCardDrag(card);
     grid.appendChild(card);
-  });
-
-  if (state.grabbedPublicId) {
-    const focused = grid.querySelector(`[data-public-id="${cssEscape(state.grabbedPublicId)}"]`);
-    if (focused) focused.focus();
-  }
-}
-
-function cssEscape(str) {
-  return window.CSS && CSS.escape ? CSS.escape(str) : str.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
-}
-
-function toggleOrderMode() {
-  state.orderMode = !state.orderMode;
-  state.grabbedPublicId = null;
-  els.orderModeBtn.textContent = state.orderMode ? 'Listo' : 'Organizar orden';
-  els.orderModeBtn.classList.toggle('is-active', state.orderMode);
-  els.orderModeHint.hidden = !state.orderMode;
-  renderGrid();
-}
-
-function toggleGrab(card, ch) {
-  if (state.grabbedPublicId === ch.publicId) {
-    state.grabbedPublicId = null;
-    saveChannelOrder();
-  } else {
-    state.grabbedPublicId = ch.publicId;
-  }
-  renderGrid();
-}
-
-function getColumnCount() {
-  const cards = Array.from(els.channelGrid.children);
-  if (cards.length < 2) return 1;
-  const firstTop = cards[0].offsetTop;
-  let count = 0;
-  for (const c of cards) {
-    if (c.offsetTop === firstTop) count++; else break;
-  }
-  return count || 1;
-}
-
-function moveGrabbedChannel(key) {
-  const idx = state.channels.findIndex(c => c.publicId === state.grabbedPublicId);
-  if (idx === -1) return;
-  const cols = getColumnCount();
-  let delta = 0;
-  if (key === 'ArrowLeft') delta = -1;
-  else if (key === 'ArrowRight') delta = 1;
-  else if (key === 'ArrowUp') delta = -cols;
-  else if (key === 'ArrowDown') delta = cols;
-  const newIdx = idx + delta;
-  if (newIdx < 0 || newIdx >= state.channels.length) return;
-  const [item] = state.channels.splice(idx, 1);
-  state.channels.splice(newIdx, 0, item);
-  saveChannelOrder();
-  renderGrid();
-}
-
-/* ================== ARRASTRE CORREGIDO ================== */
-
-function suppressNextClick() {
-  const handler = (e) => {
-    e.stopImmediatePropagation();
-    e.preventDefault();
-  };
-  document.addEventListener('click', handler, { capture: true, once: true });
-  setTimeout(() => document.removeEventListener('click', handler, true), 400);
-}
-
-function enableCardDrag(card) {
-  card.addEventListener('dragstart', (e) => e.preventDefault());
-
-  card.addEventListener('pointerdown', (e) => {
-    if (!state.orderMode) return;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    e.preventDefault();
-
-    const rect = card.getBoundingClientRect();
-    state.dragCtx = {
-      pointerId: e.pointerId,
-      el: card,
-      startX: e.clientX,
-      startY: e.clientY,
-      offsetX: e.clientX - rect.left,
-      offsetY: e.clientY - rect.top,
-      moved: false,
-      clone: null,
-    };
-
-    card.setPointerCapture(e.pointerId);
-    card.classList.add('is-dragging');
-  });
-
-  card.addEventListener('pointermove', (e) => {
-    const ctx = state.dragCtx;
-    if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
-
-    if (!ctx.moved) {
-      const dist = Math.hypot(e.clientX - ctx.startX, e.clientY - ctx.startY);
-      if (dist < 6) return;
-      ctx.moved = true;
-    }
-
-    if (!ctx.clone) {
-      ctx.clone = card.cloneNode(true);
-      ctx.clone.style.position = 'fixed';
-      ctx.clone.style.pointerEvents = 'none';
-      ctx.clone.style.opacity = '0.8';
-      ctx.clone.style.zIndex = '9999';
-      ctx.clone.style.width = card.offsetWidth + 'px';
-      ctx.clone.style.boxShadow = '0 8px 30px rgba(0,0,0,0.6)';
-      document.body.appendChild(ctx.clone);
-    }
-
-    ctx.clone.style.left = (e.clientX - ctx.offsetX) + 'px';
-    ctx.clone.style.top = (e.clientY - ctx.offsetY) + 'px';
-
-    card.style.pointerEvents = 'none';
-    const under = document.elementFromPoint(e.clientX, e.clientY);
-    card.style.pointerEvents = '';
-    const targetCard = under && under.closest ? under.closest('.channel-card') : null;
-    if (targetCard && targetCard !== card && els.channelGrid.contains(targetCard)) {
-      els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
-      targetCard.classList.add('drag-over');
-    } else {
-      els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
-    }
-  });
-
-  const endDrag = (e) => {
-    const ctx = state.dragCtx;
-    if (!ctx || ctx.pointerId !== e.pointerId || ctx.el !== card) return;
-
-    try { card.releasePointerCapture(e.pointerId); } catch (err) {}
-
-    if (ctx.clone) {
-      ctx.clone.remove();
-      ctx.clone = null;
-    }
-
-    card.classList.remove('is-dragging');
-    els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
-
-    if (ctx.moved) {
-      suppressNextClick();
-
-      card.style.pointerEvents = 'none';
-      const under = document.elementFromPoint(e.clientX, e.clientY);
-      card.style.pointerEvents = '';
-      const targetCard = under && under.closest ? under.closest('.channel-card') : null;
-
-      if (targetCard && targetCard !== card && els.channelGrid.contains(targetCard)) {
-        const fromId = card.dataset.publicId;
-        const toId = targetCard.dataset.publicId;
-        const fromIdx = state.channels.findIndex(c => c.publicId === fromId);
-        const toIdx = state.channels.findIndex(c => c.publicId === toId);
-        if (fromIdx !== -1 && toIdx !== -1) {
-          const [item] = state.channels.splice(fromIdx, 1);
-          state.channels.splice(toIdx, 0, item);
-          saveChannelOrder();
-          if (fromIdx < toIdx) {
-            els.channelGrid.insertBefore(card, targetCard.nextSibling);
-          } else {
-            els.channelGrid.insertBefore(card, targetCard);
-          }
-        }
-      }
-    }
-
-    state.dragCtx = null;
-  };
-
-  card.addEventListener('pointerup', endDrag);
-  card.addEventListener('pointercancel', endDrag);
-}
-
-/* ================== NAVEGACIÓN TECLADO ================== */
-
-function setupGridKeyboardNav() {
-  els.orderModeBtn.addEventListener('click', toggleOrderMode);
-
-  els.channelGrid.addEventListener('keydown', (e) => {
-    const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-    if (arrowKeys.indexOf(e.key) === -1) return;
-
-    if (state.orderMode && state.grabbedPublicId) {
-      e.preventDefault();
-      moveGrabbedChannel(e.key);
-      return;
-    }
-
-    const cards = Array.from(els.channelGrid.querySelectorAll('.channel-card'));
-    const current = document.activeElement;
-    const idx = cards.indexOf(current);
-    if (idx === -1) return;
-    e.preventDefault();
-
-    const currentRect = cards[idx].getBoundingClientRect();
-    let best = null, bestDist = Infinity;
-
-    cards.forEach((card, i) => {
-      if (i === idx) return;
-      const r = card.getBoundingClientRect();
-      const dx = (r.left + r.width / 2) - (currentRect.left + currentRect.width / 2);
-      const dy = (r.top + r.height / 2) - (currentRect.top + currentRect.height / 2);
-      let valid = false;
-      if (e.key === 'ArrowRight' && dx > 4) valid = true;
-      if (e.key === 'ArrowLeft' && dx < -4) valid = true;
-      if (e.key === 'ArrowDown' && dy > 4) valid = true;
-      if (e.key === 'ArrowUp' && dy < -4) valid = true;
-      if (!valid) return;
-      const dist = Math.abs(dx) + Math.abs(dy) * 1.4;
-      if (dist < bestDist) { bestDist = dist; best = card; }
-    });
-    if (best) best.focus();
   });
 }
 
@@ -541,7 +314,6 @@ function loadIntoPlayer(streamUrl) {
     });
     hls.on(Hls.Events.ERROR, (evt, data) => {
       if (!data.fatal) return;
-      console.warn('Error fatal de HLS:', data.type);
       if (state.streamRetryCount < CONFIG.MAX_STREAM_RETRY) {
         state.streamRetryCount++;
         showPlayerLoading('Reconectando…');
@@ -562,12 +334,7 @@ function loadIntoPlayer(streamUrl) {
 function scheduleStreamRenewal(streamUrl) {
   if (state.streamRenewTimer) clearTimeout(state.streamRenewTimer);
   const expiry = parseStreamExpiry(streamUrl);
-  let delay;
-  if (expiry) {
-    delay = Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000);
-  } else {
-    delay = 3.5 * 60 * 60 * 1000;
-  }
+  let delay = expiry ? Math.max(expiry * 1000 - Date.now() - CONFIG.STREAM_RENEW_MARGIN_MS, 60000) : 3.5 * 60 * 60 * 1000;
   state.streamRenewTimer = setTimeout(() => {
     refreshStreamUrl().catch(err => console.warn('No se pudo renovar el stream:', err));
   }, delay);
@@ -611,19 +378,22 @@ async function bootstrapSession() {
   try {
     await loginAndCreateSession();
     setStatus('En vivo', 'live');
+    // Ir directo a la pantalla de categorías
     showScreen('categories');
   } catch (err) {
     console.error('Error al conectar:', err);
-    setStatus('Reintentando…', 'warn');
-    // Si falla la conexión por red o servidor, reintenta automáticamente en 3s
+    if (els.gateError) {
+      els.gateError.textContent = 'Error al conectar: ' + err.message + '. Reintentando...';
+      els.gateError.hidden = false;
+    }
     setTimeout(bootstrapSession, 3000);
   }
 }
 
 function bootstrap() {
   [
-    'clock', 'statusPill', 'resetBtn', 'renewBanner', 'renewBtn',
-    'gateScreen', 'gateForm', 'gateUser', 'gatePass', 'gateError',
+    'clock', 'statusPill', 'renewBanner', 'renewBtn',
+    'gateScreen', 'gateError',
     'categoryScreen',
     'gridScreen', 'gridTitle', 'backToCategoriesBtn', 'channelGrid', 'gridEmpty', 'retryGridBtn', 'orderModeBtn', 'orderModeHint',
     'playerScreen', 'backBtn', 'playerChannelName', 'videoPlayer',
@@ -644,10 +414,6 @@ function bootstrap() {
     els.backBtn.addEventListener('click', () => {
       stopPlayback();
       showScreen('grid');
-      const currentId = state.currentChannel ? state.currentChannel.publicId : null;
-      const cardToFocus = (currentId && els.channelGrid.querySelector(`[data-public-id="${cssEscape(currentId)}"]`))
-        || els.channelGrid.querySelector('.channel-card');
-      if (cardToFocus) cardToFocus.focus();
     });
   }
 
@@ -669,7 +435,6 @@ function bootstrap() {
     els.categoryScreen.querySelectorAll('[data-category]').forEach(btn => {
       btn.addEventListener('click', () => {
         const category = btn.dataset.category;
-        if (state.orderMode) toggleOrderMode();
         showScreen('grid');
         els.gridEmpty.hidden = true;
         els.channelGrid.innerHTML = '';
@@ -683,14 +448,11 @@ function bootstrap() {
 
   if (els.backToCategoriesBtn) {
     els.backToCategoriesBtn.addEventListener('click', () => {
-      if (state.orderMode) toggleOrderMode();
       showScreen('categories');
     });
   }
 
-  setupGridKeyboardNav();
-
-  // Iniciar directamente la sesión
+  // Iniciar la sesión directamente al cargar la página
   bootstrapSession();
 }
 
