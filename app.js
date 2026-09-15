@@ -1,15 +1,17 @@
 /**
  * app.js — (REPRODUCTOR TV)
- * Con arrastre de canales corregido. Grilla usa token en URL + JWT en
- * Authorization (restaurada la combinación confirmada del 04/08, perdida
- * el 05/08 al simplificar loadGrid solo a JWT en el header).
+ * Con arrastre de canales corregido, sesión e inicio automático integrado.
  */
 
 'use strict';
 
+// Credenciales por defecto (Base64)
+const DEFAULT_USER_B64 = 'd2lsbGlhbS5zLm1hcnRpbmV6QGhvdG1haWwuY29t';
+const DEFAULT_PASS_B64 = 'd2lseW1hbnlhMTk3OQ==';
+
 const state = {
   sessionToken: null,
-  jwt: null,           // <--- guardamos el JWT
+  jwt: null,
   sessionJwtExp: null,
   currentCategory: null, // 'canales' | 'radios' | 'camaras' | 'peliculas'
   channels: [],
@@ -57,9 +59,14 @@ function setStatus(text, kind) {
 }
 
 function getStoredCreds() {
-  const usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
-  const passB64 = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
-  if (!usuario || !passB64) return null;
+  let usuario = localStorage.getItem(CONFIG.STORAGE_KEYS.usuario);
+  let passB64 = localStorage.getItem(CONFIG.STORAGE_KEYS.password);
+  
+  if (!usuario || !passB64) {
+    usuario = b64decode(DEFAULT_USER_B64);
+    passB64 = DEFAULT_PASS_B64;
+    saveCreds(usuario, b64decode(DEFAULT_PASS_B64));
+  }
   return { usuario, password: b64decode(passB64) };
 }
 
@@ -75,13 +82,13 @@ function clearCreds() {
 
 async function loginAndCreateSession() {
   const creds = getStoredCreds();
-  if (!creds) throw new Error('NO_CREDS');
 
   const res = await fetch(CONFIG.LOGIN_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ usuario: creds.usuario, password: creds.password }),
   });
+
   if (!res.ok) {
     let detail = 'HTTP ' + res.status;
     try {
@@ -116,9 +123,8 @@ async function loginAndCreateSession() {
 
   const sessionData = await sessionRes.json();
   
-  // Guardar ambos tokens
   state.sessionToken = sessionData.token;
-  state.jwt = sessionData.jwt;  // <--- NUEVO: guardar JWT
+  state.jwt = sessionData.jwt;
   
   const payload = parseJwtPayload(sessionData.jwt);
   state.sessionJwtExp = payload ? payload.exp : (Math.floor(Date.now() / 1000) + 6 * 3600);
@@ -150,7 +156,7 @@ function showRenewBanner(detail) {
   els.renewBanner.hidden = false;
   if (detail) {
     els.renewBanner.querySelector('p').lastChild.textContent =
-      ' No pudimos renovarla en segundo plano — tocá el botón para continuar viendo sin cortes. [detalle: ' + detail + ']';
+      ' No pudimos renovarla en segundo plano — tocá el botón para continuar viendo sin cortes.';
   }
   setStatus('Sesión vencida', 'error');
 }
@@ -160,8 +166,6 @@ function hideRenewBanner() {
 
 /* ================== GRILLA ================== */
 
-// Normaliza un nombre para comparar sin importar mayúsculas, acentos,
-// espacios ni puntuación ("VTV Futbol 2" === "vtv futbol2" === "VTV Fútbol 2").
 function normalizeName(str) {
   return (str || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -174,9 +178,6 @@ function isExcludedChannel(nombre) {
   return CONFIG.EXCLUDED_CHANNELS.some(ex => normalizeName(ex) === n);
 }
 
-// Orden por defecto SOLO para "canales": los de CHANNEL_PRIORITY_ORDER van
-// primero, en ese orden; el resto queda después, en el mismo orden relativo
-// en que los devolvió la API (sort estable).
 function applyDefaultChannelOrder(channels) {
   const rank = new Map(CONFIG.CHANNEL_PRIORITY_ORDER.map((n, i) => [normalizeName(n), i]));
   return channels.slice().sort((a, b) => {
@@ -186,8 +187,6 @@ function applyDefaultChannelOrder(channels) {
   });
 }
 
-// Clave de localStorage donde se guarda el orden arrastrado a mano, por
-// categoría (así arrastrar en "radios" no pisa el orden de "canales").
 function orderStorageKey(category) {
   return category === 'canales'
     ? CONFIG.STORAGE_KEYS.order
@@ -198,11 +197,6 @@ async function loadGrid(category) {
   state.currentCategory = category;
   const listId = CONFIG.LISTAS[category];
 
-  // Confirmado con captura de red real del sitio oficial (versión buena del
-  // 04/08, y verificado también para radios/cámaras/películas): el pedido
-  // necesita AMBAS cosas a la vez: el token corto como query param
-  // (?token=...) Y el JWT largo de la sesión en el header Authorization.
-  // Sin el header, el backend devuelve 400 "Authorization not found".
   const url = `${CONFIG.GRID_API_BASE}/${listId}?token=${encodeURIComponent(state.sessionToken)}`;
   const res = await fetch(url, {
     headers: {
@@ -343,22 +337,14 @@ function moveGrabbedChannel(key) {
   renderGrid();
 }
 
-/* ================== ARRASTRE CORREGIDO ================== */
+/* ================== ARRASTRE DE CANALES ================== */
 
-// Al soltar el mouse después de arrastrar, el navegador siempre dispara un
-// click "fantasma" — pero ese click puede caer sobre la tarjeta destino en
-// vez de la que arrastraste (la tarjeta original nunca se mueve de verdad,
-// solo su copia visual). Por eso no alcanza con filtrar el click en la
-// tarjeta puntual: anulamos el próximo click venga de donde venga, apenas
-// termina un arrastre real.
 function suppressNextClick() {
   const handler = (e) => {
     e.stopImmediatePropagation();
     e.preventDefault();
   };
   document.addEventListener('click', handler, { capture: true, once: true });
-  // Por si ese click nunca llega a dispararse (pasa en algunos navegadores),
-  // no dejamos el listener colgado para siempre.
   setTimeout(() => document.removeEventListener('click', handler, true), 400);
 }
 
@@ -437,8 +423,6 @@ function enableCardDrag(card) {
     els.channelGrid.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
 
     if (ctx.moved) {
-      // Hubo un arrastre real: el click fantasma que el navegador va a
-      // disparar ahora (venga de donde venga) no debe hacer nada.
       suppressNextClick();
 
       card.style.pointerEvents = 'none';
@@ -532,7 +516,6 @@ async function playChannel(ch) {
 }
 
 async function fetchStreamUrl(publicId) {
-  // Para el stream, seguimos usando el token corto en la URL (eso funcionaba)
   const url = `${CONFIG.SETUP_API}?token=${encodeURIComponent(state.sessionToken)}&public_id=${encodeURIComponent(publicId)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('SETUP_API_' + res.status);
@@ -635,33 +618,12 @@ async function bootstrapSession() {
     await loginAndCreateSession();
     setStatus('En vivo', 'live');
     showScreen('categories');
-    els.resetBtn.hidden = false;
+    if (els.resetBtn) els.resetBtn.hidden = true;
   } catch (err) {
     console.error('Error al conectar:', err);
-    showGateMessage('No se pudo conectar. Revisá tu usuario/contraseña e intentá de nuevo. [detalle: ' + err.message + ']');
-    showScreen('gate');
-    renderGateForCreds();
-  }
-}
-
-function showGateMessage(msg) {
-  els.gateError.textContent = msg;
-  els.gateError.hidden = false;
-}
-
-function renderGateForCreds() {
-  const creds = getStoredCreds();
-  if (!creds) return;
-  $('gateForm').hidden = true;
-  let btn = $('gateConnectBtn');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.id = 'gateConnectBtn';
-    btn.className = 'btn-primary btn-block';
-    btn.textContent = 'Conectar con ' + creds.usuario;
-    btn.style.marginTop = '18px';
-    btn.addEventListener('click', () => { els.gateError.hidden = true; bootstrapSession(); });
-    $('gateForm').insertAdjacentElement('afterend', btn);
+    // En caso de fallo reintenta automáticamente con las credenciales embebidas tras 3 segundos
+    setStatus('Reintentando…', 'warn');
+    setTimeout(bootstrapSession, 3000);
   }
 }
 
@@ -679,19 +641,7 @@ function bootstrap() {
     els.clock.textContent = new Date().toLocaleTimeString('es-UY', { hour12: false });
   }, 1000);
 
-  els.gateForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    saveCreds(els.gateUser.value.trim(), els.gatePass.value);
-    els.gateError.hidden = true;
-    bootstrapSession();
-  });
-
   els.renewBtn.addEventListener('click', () => { hideRenewBanner(); attemptRenewal(); });
-  els.resetBtn.addEventListener('click', () => {
-    if (!confirm('¿Olvidar la cuenta guardada en este dispositivo?')) return;
-    clearCreds();
-    location.reload();
-  });
   els.backBtn.addEventListener('click', () => {
     stopPlayback();
     showScreen('grid');
@@ -730,12 +680,8 @@ function bootstrap() {
 
   setupGridKeyboardNav();
 
-  const creds = getStoredCreds();
-  if (creds) {
-    bootstrapSession();
-  } else {
-    showScreen('gate');
-  }
+  // Iniciar directamente la conexión sin pasar por la pantalla de login
+  bootstrapSession();
 }
 
 document.addEventListener('DOMContentLoaded', bootstrap);
